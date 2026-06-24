@@ -1,0 +1,80 @@
+# =============================================================
+# .gitignore — GPS-Denied Drone Stack
+# =============================================================
+
+# ── OS & Editor Junk ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+
+# ── ROS2 Build Artifacts ─────────────────────────────────────
+# Never commit build/install/log directories
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# ── Colcon ───────────────────────────────────────────────────
+.colcon/
+log/
+
+# ── Docker ───────────────────────────────────────────────────
+# Docker generates these; they are not source files
+*.dockerignore.bak
+
+# ── PX4 Build Artifacts ───────────────────────────────────────
+# If you ever clone PX4 source locally (not inside container)
+PX4-Autopilot/build/
+PX4-Autopilot/Tools/sitl_gazebo/build/
+*.px4
+*.bin
+*.elf
+
+# ── Logs & Data ───────────────────────────────────────────────
+*.log
+*.bag
+*.db3
+rosbag2_*/
+logs/
+ulg_logs/
+
+# ── Secrets & Personal Config ─────────────────────────────────
+# Never commit credentials or machine-specific overrides
+.env.local
+.env.*.local
+secrets.yaml
+*.pem
+*.key
+
+# ── Calibration Output (generated, not source) ────────────────
+# Kalibr output files — commit only the final calibration YAML
+results-cam-*.txt
+results-imu-*.txt
+camchain-*.yaml
+
+# ── Gazebo Cache ──────────────────────────────────────────────
+.gazebo/
+~/.gazebo/
+
+# ── Temporary ─────────────────────────────────────────────────
+tmp/
+temp/
+scratch/

@@ -1,0 +1,70 @@
+# =============================================================
+# Dockerfile.vio
+# =============================================================
+# PURPOSE  : OpenVINS Visual-Inertial Odometry — Phase 3+
+# PLATFORM : x86_64 (sim) / ARM64 cross-compiled (real, Phase 5)
+#
+# OpenVINS subscribes to:
+#   /camera/image_raw          (monocular or stereo)
+#   /camera/imu                (IMU at ~200Hz)
+#
+# OpenVINS publishes:
+#   /openvins/odometry         (nav_msgs/Odometry, ENU frame)
+#
+# The vio_bridge.py node in the ros2 container picks this up
+# and converts it to the PX4 format.
+#
+# STATUS: Phase 3 — built when needed (make build-vio)
+# =============================================================
+
+ARG ROS_DISTRO=humble
+ARG OPENVINS_BRANCH=master
+
+FROM osrf/ros:${ROS_DISTRO}-desktop
+
+ARG ROS_DISTRO
+ARG OPENVINS_BRANCH
+LABEL description="OpenVINS ${OPENVINS_BRANCH} on ROS2 ${ROS_DISTRO}"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── System Dependencies ───────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    build-essential \
+    git \
+    libeigen3-dev \
+    libopencv-dev \
+    python3-colcon-common-extensions \
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-rviz2 \
+    ros-${ROS_DISTRO}-image-transport \
+    ros-${ROS_DISTRO}-cv-bridge \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Build OpenVINS ────────────────────────────────────────────
+# OpenVINS uses a standard ROS2 colcon workspace.
+# We clone only the main branch (no heavy history).
+RUN mkdir -p /openvins_ws/src && \
+    cd /openvins_ws/src && \
+    echo "==> Cloning OpenVINS @ ${OPENVINS_BRANCH} ..." && \
+    git clone \
+        --depth 1 \
+        --branch ${OPENVINS_BRANCH} \
+        https://github.com/rpng/open_vins.git && \
+    echo "==> Building OpenVINS ..." && \
+    . /opt/ros/${ROS_DISTRO}/setup.sh && \
+    cd /openvins_ws && \
+    colcon build \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release && \
+    echo "==> OpenVINS build complete."
+
+# ── Environment ───────────────────────────────────────────────
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc && \
+    echo "source /openvins_ws/install/setup.bash" >> /etc/bash.bashrc && \
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /etc/bash.bashrc
+
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# Default: keep alive. OpenVINS is launched via ros2 launch command.
+CMD ["sleep", "infinity"]

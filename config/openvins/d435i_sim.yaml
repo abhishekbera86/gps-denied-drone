@@ -1,0 +1,42 @@
+# =============================================================
+# config/openvins/d435i_sim.yaml
+# =============================================================
+# OpenVINS configuration for SIMULATED camera in Gazebo.
+# Used in Phase 4 (GPS-denied simulation test).
+#
+# In simulation, OpenVINS subscribes to the Gazebo camera topics.
+# The noise values are lower than real hardware (ideal sensor).
+# =============================================================
+
+# ── Camera Topic ──────────────────────────────────────────────
+# Matches the Gazebo camera plugin topic for the x500 model
+topic_imu: "/x500/imu/data"
+topic_camera0: "/x500/camera/image_raw"
+
+# ── Camera Intrinsics (Gazebo virtual camera defaults) ────────
+cam0_intrinsics: [458.654, 457.296, 367.215, 248.375]
+cam0_distortion_model: "radtan"
+cam0_distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+cam0_resolution: [752, 480]
+
+# ── Camera-IMU Extrinsics ────────────────────────────────────
+# Transform from IMU to camera frame.
+# For simulation: identity (camera and IMU at same location).
+T_imu_cam0:
+  - [1.0, 0.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0, 0.0]
+  - [0.0, 0.0, 1.0, 0.0]
+  - [0.0, 0.0, 0.0, 1.0]
+
+# ── IMU Noise (simulation — ideal sensor) ─────────────────────
+gyroscope_noise_density: 0.005
+gyroscope_random_walk: 0.001
+accelerometer_noise_density: 0.01
+accelerometer_random_walk: 0.001
+
+# ── OpenVINS Estimator Settings ───────────────────────────────
+max_clones: 15
+max_slam: 0
+max_aruco: 0
+use_stereo: false
+max_cameras: 1

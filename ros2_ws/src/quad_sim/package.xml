@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>quad_sim</name>
+  <version>0.1.0</version>
+  <description>
+    Simulation-specific package for GPS-denied quadcopter.
+    Contains ONLY launch files and simulation config.
+    All actual flight logic lives in quad_core.
+    
+    Launch files:
+      sim_base.launch.py    : Phase 1 — starts DDS agent
+      sim_offboard.launch.py: Phase 2 — starts offboard hover
+      sim_vio.launch.py     : Phase 3/4 — starts VIO + mission
+  </description>
+
+  <maintainer email="your@email.com">Your Name</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>quad_core</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

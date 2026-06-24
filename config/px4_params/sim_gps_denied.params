@@ -1,0 +1,66 @@
+# =============================================================
+# config/px4_params/sim_gps_denied.params
+# =============================================================
+# PX4 EKF2 parameters for GPS-DENIED flight in SIMULATION.
+# Load these when testing VIO in Gazebo (Phase 4).
+#
+# How to apply:
+#   bash scripts/px4_params_upload.sh config/px4_params/sim_gps_denied.params sim
+#   Then reboot/restart PX4 SITL.
+#
+# Or manually in PX4 console:
+#   param set <NAME> <VALUE>
+#
+# Reference: https://docs.px4.io/main/en/advanced_config/parameter_reference.html
+# =============================================================
+
+# ── State Estimator ───────────────────────────────────────────
+# Use EKF2 (Extended Kalman Filter 2) — required for VIO
+SYS_MC_EST_GROUP 2
+
+# ── EKF2 Aid Sources ──────────────────────────────────────────
+# EKF2_AID_MASK controls which sensor data EKF2 fuses.
+# Bits: 0=GPS, 1=optical flow, 3=vision pos, 4=vision yaw, 6=GPS yaw
+#
+# For GPS-denied VIO flight (vision position + vision yaw):
+#   Bit 3 = vision position  (8)
+#   Bit 4 = vision yaw       (16)
+#   Combined = 24
+#
+# Note: Bit 0 (GPS) must be 0 to disable GPS fusion
+EKF2_AID_MASK 24
+
+# ── Height Source ─────────────────────────────────────────────
+# 0 = barometer, 1 = GPS, 2 = range finder, 3 = vision
+# Use vision height (from VIO z-axis)
+EKF2_HGT_MODE 3
+
+# ── Vision Delay Compensation ────────────────────────────────
+# Time delay (ms) between when the image was captured and when
+# the VIO odometry reaches PX4. Tune this based on your system.
+# Start with 50ms and adjust if EKF is diverging.
+EKF2_EV_DELAY 50
+
+# ── Vision Noise / Covariance ─────────────────────────────────
+# 0 = use covariance from the VIO message (recommended)
+# 1 = use fixed noise values below
+EKF2_EV_NOISE_MD 0
+
+# Fixed noise (only used if EKF2_EV_NOISE_MD = 1):
+EKF2_EVP_NOISE 0.1    # Position noise (m)
+EKF2_EVA_NOISE 0.05   # Angle noise (rad)
+EKF2_EVV_NOISE 0.1    # Velocity noise (m/s)
+
+# ── GPS Configuration ─────────────────────────────────────────
+# Disable GPS usage — we are GPS-denied
+# SYS_HAS_GPS: tell PX4 there is no GPS (prevents GPS wait on boot)
+SYS_HAS_GPS 0
+
+# ── Offboard Control ──────────────────────────────────────────
+# Allow offboard mode without RC transmitter connected
+# Bit 2 = offboard (4)
+COM_RCL_EXCEPT 4
+
+# ── Vision Position Validity ──────────────────────────────────
+# Maximum time (ms) since last VIO update before EKF considers vision lost
+EKF2_EV_GATE 5.0      # Innovation gate size (standard deviations)

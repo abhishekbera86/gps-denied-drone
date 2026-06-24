@@ -1,0 +1,39 @@
+# =============================================================
+# quad_sim/config/sim_params.yaml
+# =============================================================
+# Simulation-specific parameters.
+# Loaded by launch files in quad_sim/launch/.
+# =============================================================
+
+# ROS2 node parameters for simulation context
+
+offboard_controller:
+  ros__parameters:
+    # Target hover altitude in meters (NED z = negative up)
+    target_altitude_m: 5.0
+    # How close to setpoint before considering it "reached" (meters)
+    position_tolerance_m: 0.3
+    # Rate to publish OffboardControlMode keepalive (Hz)
+    # Must be >2Hz or PX4 exits offboard mode
+    keepalive_hz: 10.0
+    # Whether to auto-arm on startup (true for sim, false for real)
+    auto_arm: true
+
+mission_planner:
+  ros__parameters:
+    # Default waypoint file (relative to share/quad_sim/config/)
+    waypoint_file: "mission_square.yaml"
+    # Waypoint acceptance radius (meters)
+    waypoint_radius_m: 1.0
+    # Takeoff altitude (meters)
+    takeoff_altitude_m: 5.0
+
+vio_bridge:
+  ros__parameters:
+    # Input topic from OpenVINS (ENU frame)
+    vio_topic: "/openvins/odometry"
+    # Output topic to PX4 EKF2 (NED frame)
+    px4_topic: "/fmu/in/vehicle_visual_odometry"
+    # Estimated system latency (milliseconds)
+    # VIO delay: image capture → EKF2 fusion
+    ev_delay_ms: 50.0
