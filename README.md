@@ -4,7 +4,7 @@
 
 A fully Docker-based autonomous quadcopter stack that flies **without GPS** using Visual-Inertial Odometry (OpenVINS + RealSense D435i). Built on the **Aerostack2** framework — zero compilation required on the host machine. Designed for simulation-first development with a clean Sim-to-Real path to physical hardware (Orange Pi 5 + RealSense D435i + Pixhawk).
 
-**GitHub**: [github.com/abhishekbera86/quad-drone-gps-denied](https://github.com/abhishekbera86/quad-drone-gps-denied)
+**GitHub**: [github.com/abhishekbera86/gps-denied-drone](https://github.com/abhishekbera86/gps-denied-drone)
 
 ---
 
@@ -662,7 +662,7 @@ config: tune EKF2_EV_DELAY to 75ms  ← config change
 ```bash
 # Remote is already configured:
 git remote -v
-# origin  https://github.com/abhishekbera86/quad-drone-gps-denied.git
+# origin  https://github.com/abhishekbera86/gps-denied-drone.git
 
 # Push all branches and tags
 git push -u origin master --tags
