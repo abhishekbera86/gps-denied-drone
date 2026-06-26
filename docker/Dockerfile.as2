@@ -1,0 +1,103 @@
+# =============================================================================
+# Dockerfile.as2
+# =============================================================================
+# Aerostack2 autonomy container — ROS 2 Humble + full Aerostack2 suite.
+#
+# Strategy: Start from the official aerostack2/nightly-humble image.
+# All core framework packages are pre-compiled in that image.
+# We add ONLY the platform-specific bridge (as2_platform_pixhawk),
+# Python API, and CycloneDDS so we never build from source.
+#
+# This container runs:
+#   - MicroXRCE-DDS Agent (bridges PX4 DDS topics → ROS 2)
+#   - as2_platform_pixhawk (translates AS2 commands → PX4 setpoints)
+#   - as2_state_estimator  (ingests VIO odometry)
+#   - as2_motion_controller
+#   - as2_behaviors_motion (Takeoff, Land, GoTo, FollowPath)
+# =============================================================================
+
+FROM aerostack2/nightly-humble:latest
+
+LABEL org.opencontainers.image.title="quad/aerostack2" \
+      org.opencontainers.image.description="Aerostack2 Humble — PX4 Pixhawk platform + behaviours" \
+      org.opencontainers.image.vendor="quad-drone-project"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# ── Install Aerostack2 platform + behaviour packages via apt ──────────────
+# All are pre-compiled official ROS 2 Humble .deb packages.
+# No colcon build step needed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # Pixhawk/PX4 platform bridge
+        ros-humble-as2-platform-pixhawk \
+        # State estimation (raw_odometry plugin for VIO)
+        ros-humble-as2-state-estimator \
+        # Motion controller plugins (differential flatness, PID)
+        ros-humble-as2-motion-controller \
+        ros-humble-as2-controller-plugin-differential-flatness \
+        ros-humble-as2-controller-plugin-pid-speed-controller \
+        # Behaviour action servers
+        ros-humble-as2-behaviors-motion \
+        ros-humble-as2-behaviors-perception \
+        # Python mission API
+        ros-humble-as2-python-api \
+        # Mission interpreter and behavior trees
+        ros-humble-as2-alphanumeric-viewer \
+        # DDS middleware
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-cyclonedds \
+        # QGroundControl-compatible telemetry viewer
+        ros-humble-mavros-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Tools for session management and debugging ────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tmux \
+        tmuxinator \
+        python3-pip \
+        python3-yaml \
+        wget \
+        curl \
+        vim \
+        ros-humble-rqt \
+        ros-humble-rqt-common-plugins \
+        ros-humble-rviz2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python dependencies for quad_core missions ────────────────────────────
+RUN pip3 install --no-cache-dir \
+        pymavlink \
+        pyserial \
+        pyyaml \
+        numpy
+
+# ── tmux configuration for multi-pane session management ─────────────────
+RUN echo "set -g mouse on\n\
+set -g history-limit 50000\n\
+set -g default-terminal 'screen-256color'\n\
+bind | split-window -h\n\
+bind - split-window -v" > /root/.tmux.conf
+
+# ── CycloneDDS configuration (host network mode) ─────────────────────────
+# Suppresses multicast warnings on loopback and sets a sensible MTU.
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV CYCLONEDDS_URI="<CycloneDDS><Domain><General><NetworkInterfaceAddress>lo</NetworkInterfaceAddress></General></Domain></CycloneDDS>"
+
+# ── No GPU / no display ───────────────────────────────────────────────────
+# We never forward DISPLAY in any container — Gazebo is headless.
+ENV DISPLAY=""
+ENV QT_QPA_PLATFORM=offscreen
+
+# ── Shell helpers: source ROS 2 on every bash session ────────────────────
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
+    && echo "source /aerostack2_ws/install/setup.bash 2>/dev/null || true" >> /root/.bashrc \
+    && echo "# Quad workspace (mounted at runtime)" >> /root/.bashrc \
+    && echo "source /ros2_ws/install/setup.bash 2>/dev/null || true" >> /root/.bashrc
+
+# ── Workspace mount point ─────────────────────────────────────────────────
+# ros2_ws is mounted read-only at runtime (no build inside container).
+# Config and scripts are also mounted read-only.
+VOLUME ["/ros2_ws", "/config", "/scripts"]
+
+WORKDIR /ros2_ws
+CMD ["/bin/bash"]

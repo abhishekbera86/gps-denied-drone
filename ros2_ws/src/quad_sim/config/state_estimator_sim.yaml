@@ -1,0 +1,36 @@
+# =============================================================================
+# state_estimator_sim.yaml — Aerostack2 State Estimator (Simulation)
+# =============================================================================
+# The state estimator ingests VIO odometry from OpenVINS and publishes
+# the drone's position/velocity to the AS2 control loop.
+#
+# Plugin: raw_odometry
+#   → Subscribes to: /openvins/odometry (nav_msgs/Odometry, ENU)
+#   → Publishes:     /drone0/self_localization/pose
+#                    /drone0/self_localization/twist
+#   → Forwards to:   as2_platform_pixhawk → PX4 EKF2 visual odometry input
+# =============================================================================
+
+/**:
+  ros__parameters:
+
+    # Plugin selection: raw_odometry ingests any nav_msgs/Odometry source
+    plugin_name: "raw_odometry"
+
+    # ── Frame IDs (ROS 2 / ENU convention) ─────────────────────────────
+    map_frame: "map"
+    odom_frame: "odom"
+    base_frame: "drone0/base_link"
+
+    # ── Input topic ─────────────────────────────────────────────────────
+    # This is the topic published by OpenVINS.
+    odom_topic: "/openvins/odometry"
+
+    # ── GPS origin (not used in GPS-denied mode) ─────────────────────
+    # Set use_gps_origin: false to disable GPS-based map origin.
+    use_gps_origin: false
+
+    # ── Publish rate ────────────────────────────────────────────────────
+    # Match the VIO output rate to avoid stale state estimates.
+    publish_tf: true
+    tf_freq: 50.0            # Hz

@@ -1,0 +1,50 @@
+# =============================================================================
+# realsense_hw.yaml — RealSense D435i Node Configuration
+# =============================================================================
+# Parameters for the ros2_realsense2_camera node running on real hardware.
+# Configures the D435i to publish the exact topics OpenVINS expects.
+#
+# Firmware: 5.17.3.10 | SDK: librealsense v2.58.2
+# =============================================================================
+
+/**:
+  ros__parameters:
+
+    # ── Camera Configuration ──────────────────────────────────────────────
+    camera_name: "camera"          # Topic prefix: /camera/...
+    camera_namespace: ""
+
+    # ── Infrared (for VIO monocular input) ───────────────────────────────
+    enable_infra1: true
+    enable_infra2: false           # Monocular VIO only
+    infra_fps: 30.0                # Match OpenVINS config
+    infra_width: 640
+    infra_height: 480
+    infra_format: "Y8"             # 8-bit grayscale
+
+    # Publish rectified IR images (D435i does internal rectification)
+    infra1_rect: true
+
+    # ── IMU ───────────────────────────────────────────────────────────────
+    enable_gyro: true
+    enable_accel: true
+    # Unified IMU topic (fused gyro + accel) — required by OpenVINS
+    unite_imu_method: "linear_interpolation"
+    imu_fps: 400                   # D435i max IMU rate
+
+    # ── Depth (for future obstacle avoidance — not used by VIO) ──────────
+    enable_depth: true             # Keep depth enabled for potential nav use
+    depth_fps: 30.0
+    depth_width: 640
+    depth_height: 480
+
+    # ── RGB (disabled — not needed for IR-based VIO) ─────────────────────
+    enable_color: false
+
+    # ── Sync ──────────────────────────────────────────────────────────────
+    # Align IR frames with IMU timestamps for VIO accuracy
+    enable_sync: false             # D435i handles sync in firmware
+
+    # ── Frame IDs ─────────────────────────────────────────────────────────
+    base_frame_id: "camera_link"
+    odom_frame_id: "camera_odom_frame"

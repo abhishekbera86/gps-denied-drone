@@ -1,0 +1,41 @@
+# =============================================================================
+# as2_platform_sim.yaml — Aerostack2 Platform Config (Simulation)
+# =============================================================================
+# Configuration for as2_platform_pixhawk connecting to PX4 SITL via UDP.
+# This file is loaded by the Aerostack2 Pixhawk platform node.
+# =============================================================================
+
+/**:
+  ros__parameters:
+
+    # ── Communication with PX4 SITL ─────────────────────────────────────
+    # PX4 SITL publishes/subscribes on UDP via MicroXRCE-DDS Agent.
+    # The agent listens on localhost:8888 (started in the aerostack2 container).
+    transport: udp
+    ip: "127.0.0.1"
+    port: 8888
+
+    # ── Drone Identity ───────────────────────────────────────────────────
+    namespace: "drone0"
+    # PX4 system ID (default 1 for single-drone SITL)
+    system_id: 1
+    component_id: 1
+
+    # ── Control Configuration ────────────────────────────────────────────
+    # Offboard mode: AS2 sends position + velocity setpoints to PX4.
+    # PX4's position controller handles attitude and motor mixing.
+    offboard_control_mode: position
+
+    # ── Frame Convention ─────────────────────────────────────────────────
+    # AS2 operates in ENU (East-North-Up) — PX4 uses NED.
+    # as2_platform_pixhawk performs the conversion automatically.
+    # Do NOT apply any manual frame rotation in your mission code.
+
+    # ── Heartbeat ────────────────────────────────────────────────────────
+    # PX4 requires setpoints at >2 Hz to maintain OFFBOARD mode.
+    # AS2 handles this automatically — do not send manual heartbeats.
+    cmd_freq: 30.0       # Hz — setpoint publish rate
+
+    # ── Safety Limits ────────────────────────────────────────────────────
+    max_speed: 2.0       # m/s — enforced by AS2 motion controller
+    max_yaw_rate: 0.5    # rad/s

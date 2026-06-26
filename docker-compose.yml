@@ -1,162 +1,202 @@
-# =============================================================
+# =============================================================================
 # docker-compose.yml — GPS-Denied Autonomous Drone Stack
-# =============================================================
+# =============================================================================
 #
-# Services are grouped by PROFILE:
-#   sim  → simulation stack (px4 SITL + ros2 + dds bridge)
-#   vio  → adds OpenVINS container (Phase 3+)
-#   hw   → real hardware stack on Orange Pi (Phase 5)
+# Profiles:
+#   sim   → PX4 SITL (headless Gazebo) + Aerostack2 node container
+#   vio   → adds OpenVINS VIO container (simulation or hardware source)
+#   hw    → hardware stack (Orange Pi 5 ARM64 — run ON the companion computer)
 #
-# Usage (via Makefile — preferred):
-#   make sim-up          → start simulation stack
-#   make vio-up          → start sim + VIO
-#   make hw-up           → start hardware stack
+# Usage (preferred — via Makefile):
+#   make sim-up          Start simulation stack
+#   make vio-up          Start simulation + VIO
+#   make hw-up           Start hardware stack (run on Orange Pi)
 #
-# Direct usage:
+# Direct:
 #   docker compose --profile sim up -d
 #   docker compose --profile sim --profile vio up -d
-# =============================================================
+# =============================================================================
 
-version: "3.8"
-
-# ── Named Volumes ─────────────────────────────────────────────
-# px4_build: caches the PX4 SITL build (~1.5 GB).
-#   The first `docker compose build` compiles PX4 from source.
-#   This volume is NOT used at runtime — the build is baked into
-#   the image layer. Docker's layer cache provides persistence.
+# Named volumes
 volumes:
-  ros2_build_cache:
-    name: ros2_build_cache
+  px4_build_cache:
+    name: quad_px4_build_cache
+    # Preserves ccache across container rebuilds — keeps incremental
+    # PX4 SITL recompiles fast even if image layer is invalidated.
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================================
 # SERVICES
-# ─────────────────────────────────────────────────────────────
+# =============================================================================
 services:
 
-  # ── PX4 SITL + Gazebo Garden ────────────────────────────────
-  # Runs the PX4 flight stack in software-in-the-loop mode.
-  # PX4 binary is pre-built into the image layer (cached).
+  # ── PX4 SITL + Gazebo Garden ─────────────────────────────────────────────
+  # Official px4io dev image — Gazebo Garden + compiler toolchain included.
+  # SITL binary is baked into the image layer on first build (3-5 min).
+  # Subsequent `docker compose up` starts in seconds.
   #
-  # After starting: exec in and run:
-  #   cd /PX4-Autopilot && make px4_sitl gz_x500
-  # Or use: make px4-start (starts SITL automatically)
-  px4:
+  # Runs HEADLESS (no GUI) — no GPU required.
+  px4_sitl:
     build:
       context: .
-      dockerfile: docker/Dockerfile.px4
+      dockerfile: docker/Dockerfile.px4_sitl
       args:
         PX4_VERSION: ${PX4_VERSION:-v1.14.3}
+        PX4_GZ_MODEL: ${PX4_GZ_MODEL:-x500}
     image: quad/px4-sitl:${PX4_VERSION:-v1.14.3}
-    container_name: px4
-    network_mode: host          # MANDATORY — DDS discovery needs host network
-    environment:
-      - DISPLAY=${DISPLAY:-:0}
-      - PX4_HEADLESS=${PX4_HEADLESS:-1}
-      - PX4_SIM_SPEED_FACTOR=${PX4_SIM_SPEED_FACTOR:-0.5}
-      - PX4_GZ_MODEL=${PX4_GZ_MODEL:-x500}
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:ro   # X11 socket for Gazebo GUI (optional)
-    # Keep container alive — PX4 SITL is started manually or via Phase 1 scripts
-    entrypoint: /bin/bash
-    command: -c "sleep infinity"
-    restart: "no"
-    profiles: [sim]
-
-  # ── ROS2 Humble + px4_msgs + uXRCE-DDS Agent ─────────────────
-  # Main ROS2 environment. Contains:
-  #   - ROS2 Humble Desktop
-  #   - CycloneDDS middleware
-  #   - px4_msgs (pinned to PX4_MSGS_TAG, matching PX4_VERSION)
-  #   - Micro XRCE-DDS Agent (bridges PX4 uXRCE-DDS ↔ ROS2)
-  #   - The ros2_ws workspace mounted as a live volume
-  #
-  # The DDS agent starts automatically when the container starts.
-  # ROS2 nodes are launched manually or via launch files.
-  ros2:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.ros2
-      args:
-        PX4_MSGS_TAG: ${PX4_MSGS_TAG:-release/1.14}
-        ROS_DISTRO: ${ROS_DISTRO:-humble}
-    image: quad/ros2-humble:${PX4_MSGS_TAG:-release/1.14}
-    container_name: ros2
+    container_name: px4_sitl
+    # host networking: DDS discovery, MAVLink, and QGC all on localhost.
     network_mode: host
     environment:
-      - DISPLAY=${DISPLAY:-:0}
-      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
-      - UXRCE_DDS_PORT=${UXRCE_DDS_PORT:-8888}
+      PX4_HEADLESS: "1"                         # No GPU — always headless
+      PX4_SIM_SPEED_FACTOR: "${PX4_SIM_SPEED_FACTOR:-0.5}"
+      PX4_GZ_MODEL: "${PX4_GZ_MODEL:-x500}"
+      # No DISPLAY forwarded — running headless.
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:ro
-      - ./ros2_ws:/ros2_ws           # Live mount: edit on host, run in container
-      - ./config:/config:ro          # Read-only config files
-    # Start the uXRCE-DDS agent, then keep alive
-    # The agent bridges PX4 topics to ROS2 DDS network
-    entrypoint: /bin/bash
+      # ccache volume: persists compiled object files between restarts
+      - px4_build_cache:/root/.ccache
     command: >
-      -c "
-      echo '[ros2] Starting Micro XRCE-DDS Agent on UDP port ${UXRCE_DDS_PORT:-8888}...' &&
-      MicroXRCEAgent udp4 --port ${UXRCE_DDS_PORT:-8888} &
-      echo '[ros2] Agent started. Container ready.' &&
-      sleep infinity
+      bash -c "
+        echo '[px4_sitl] Starting PX4 SITL + Gazebo Garden (headless)...' &&
+        cd /PX4-Autopilot &&
+        PX4_HEADLESS=1
+        PX4_SIM_SPEED_FACTOR=${PX4_SIM_SPEED_FACTOR:-0.5}
+        make px4_sitl gz_${PX4_GZ_MODEL:-x500}
       "
     restart: "no"
     profiles: [sim]
+    healthcheck:
+      # PX4 SITL is ready when it writes 'Ready to fly' to stdout.
+      # Check the log: docker logs px4_sitl | grep 'Ready to fly'
+      test: ["CMD", "bash", "-c", "pgrep -x px4 > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
-  # ── OpenVINS — Visual-Inertial Odometry ───────────────────────
-  # Added in Phase 3 (GPS-denied simulation) and Phase 5 (real hw).
-  # Runs OpenVINS which subscribes to camera + IMU topics and
-  # publishes /openvins/odometry (nav_msgs/Odometry, ENU frame).
-  # The vio_bridge node in ros2 container converts this to PX4 format.
+  # ── Aerostack2 Autonomy Container ─────────────────────────────────────────
+  # Runs:
+  #   1. MicroXRCE-DDS Agent (bridges PX4 uXRCE topics → ROS 2)
+  #   2. Aerostack2 nodes (launched via `make as2-launch` after container starts)
   #
-  # Profile: vio (activate with: make vio-up)
+  # The ros2_ws is mounted read-only — no build inside the container.
+  # All AS2 packages are pre-installed as .deb binaries.
+  aerostack2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.as2
+    image: quad/aerostack2:${AS2_IMAGE_TAG:-nightly-humble}
+    container_name: aerostack2
+    network_mode: host
+    depends_on:
+      px4_sitl:
+        condition: service_started
+    environment:
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      DISPLAY: ""                                 # No display — headless
+      QT_QPA_PLATFORM: offscreen
+      DRONE_NAMESPACE: drone0
+    volumes:
+      # Source code mounted read-only — edit on host, reflects in container
+      - ./ros2_ws:/ros2_ws:ro
+      # Config files
+      - ./config:/config:ro
+      # Scripts
+      - ./scripts:/scripts:ro
+    # Start the MicroXRCE-DDS Agent, then wait.
+    # AS2 nodes are started separately via `make as2-launch`.
+    command: >
+      bash -c "
+        echo '[aerostack2] Starting MicroXRCE-DDS Agent on UDP port ${UXRCE_DDS_PORT:-8888}...' &&
+        source /opt/ros/humble/setup.bash &&
+        MicroXRCEAgent udp4 -p ${UXRCE_DDS_PORT:-8888} &
+        echo '[aerostack2] Agent started. Container ready.' &&
+        echo '[aerostack2] Run: make as2-launch to start AS2 nodes.' &&
+        tail -f /dev/null
+      "
+    restart: "no"
+    profiles: [sim]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "pgrep -x MicroXRCEAgent > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  # ── OpenVINS — Visual-Inertial Odometry ───────────────────────────────────
+  # Subscribes to: /camera/image_raw + /camera/imu
+  # Publishes:     /openvins/odometry  (nav_msgs/Odometry, ENU frame)
+  #
+  # Works with BOTH:
+  #   - Simulated Gazebo camera (sim profile)
+  #   - Physical RealSense D435i (hw profile — via ros2_ws topic remap)
   openvins:
     build:
       context: .
       dockerfile: docker/Dockerfile.vio
-      args:
-        ROS_DISTRO: ${ROS_DISTRO:-humble}
-        OPENVINS_BRANCH: ${OPENVINS_BRANCH:-master}
-    image: quad/openvins:${OPENVINS_BRANCH:-master}
+    image: quad/openvins:${ROS_DISTRO:-humble}
     container_name: openvins
     network_mode: host
     environment:
-      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      DISPLAY: ""
     volumes:
-      - ./config/openvins:/config/openvins:ro
-    entrypoint: /bin/bash
-    command: -c "sleep infinity"
+      # OpenVINS calibration config mounted from quad_core/config/
+      - ./ros2_ws/src/quad_core/config:/config:ro
+    command: >
+      bash -c "
+        source /opt/ros/humble/setup.bash &&
+        echo '[openvins] Launching OpenVINS VIO...' &&
+        ros2 launch ov_msckf subscribe.launch.py \
+          config_path:=/config/vio_d435i.yaml \
+          verbosity:=WARNING \
+          use_stereo:=false \
+          max_cameras:=1
+      "
     restart: "no"
     profiles: [vio]
+    healthcheck:
+      test: ["CMD", "bash", "-c",
+             "source /opt/ros/humble/setup.bash &&
+              ros2 topic info /openvins/odometry --no-daemon 2>/dev/null | grep -q 'Publisher'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
-  # ── Hardware Stack — Orange Pi (Phase 5) ──────────────────────
-  # This service runs on the Orange Pi (ARM64), not on the dev machine.
-  # It handles: RealSense D435i driver + OpenVINS + quad_core nodes.
-  # The px4 and ros2 services above are NOT used in hardware mode.
+  # ── Hardware Stack — Orange Pi 5 (ARM64) ──────────────────────────────────
+  # Run this ONLY on the Orange Pi 5, not the development machine.
+  # This single container replaces all sim containers on real hardware.
   #
-  # Profile: hw (activate with: make hw-up)
-  # NOTE: Build this image on Orange Pi or cross-compile with buildx.
-  realsense:
+  # Includes: RealSense D435i driver + OpenVINS + AS2 Pixhawk platform.
+  # The Aerostack2 nodes (platform, state estimator, behaviours) are started
+  # via `make as2-launch` after this container is running.
+  hw_stack:
     build:
       context: .
       dockerfile: docker/Dockerfile.hw
-      args:
-        ROS_DISTRO: ${ROS_DISTRO:-humble}
-        REALSENSE_SDK_VERSION: ${REALSENSE_SDK_VERSION:-v2.55.1}
-    image: quad/realsense-arm64:${REALSENSE_SDK_VERSION:-v2.55.1}
-    container_name: realsense
+      # Cross-compile for ARM64 from x86_64:
+      #   docker buildx build --platform linux/arm64 ...
+      # Or build natively on Orange Pi 5 (recommended).
+    image: quad/hw-stack:arm64
+    container_name: hw_stack
     network_mode: host
-    privileged: true             # Required for USB device access
+    privileged: true           # Required: USB camera access + UART serial
     environment:
-      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
-      - UXRCE_DDS_PORT=${UXRCE_DDS_PORT:-8888}
-      - PIXHAWK_SERIAL_PORT=${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}
-      - PIXHAWK_BAUD_RATE=${PIXHAWK_BAUD_RATE:-921600}
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      DISPLAY: ""
+      PIXHAWK_SERIAL_PORT: "${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}"
+      PIXHAWK_BAUD_RATE: "${PIXHAWK_BAUD_RATE:-921600}"
     volumes:
-      - /dev:/dev                # Full device access for RealSense + UART
-      - ./ros2_ws:/ros2_ws
+      - /dev:/dev              # Full device access: RealSense USB + UART
+      - ./ros2_ws:/ros2_ws:ro
       - ./config:/config:ro
-    entrypoint: /bin/bash
-    command: -c "sleep infinity"
+      - ./scripts:/scripts:ro
+    command: >
+      bash -c "
+        echo '[hw_stack] Hardware stack starting...' &&
+        echo '[hw_stack] RealSense device:  ${PIXHAWK_SERIAL_PORT}' &&
+        echo '[hw_stack] Pixhawk serial:    ${PIXHAWK_SERIAL_PORT} @ ${PIXHAWK_BAUD_RATE}' &&
+        tail -f /dev/null
+      "
     restart: "no"
     profiles: [hw]

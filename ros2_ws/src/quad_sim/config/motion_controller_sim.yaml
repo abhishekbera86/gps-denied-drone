@@ -1,0 +1,33 @@
+# =============================================================================
+# motion_controller_sim.yaml — Aerostack2 Motion Controller (Simulation)
+# =============================================================================
+# Configures the AS2 motion controller which converts behaviour setpoints
+# (position/velocity) into motor commands via PX4.
+#
+# Plugin: differential_flatness
+#   Ideal for multirotor — maps position/velocity/acceleration setpoints
+#   to attitude and thrust commands via differential flatness theory.
+# =============================================================================
+
+/**:
+  ros__parameters:
+
+    plugin_name: "differential_flatness_controller"
+
+    # ── Safety limits ────────────────────────────────────────────────────
+    # These are enforced by the controller before sending to PX4.
+    # PX4 has its own limits on top — these are the ROS 2 side limits.
+    max_speed: 2.0           # m/s horizontal
+    max_vertical_speed: 1.5  # m/s vertical
+    max_yaw_rate: 0.5        # rad/s
+
+    # ── Control gains (differential flatness plugin) ─────────────────────
+    # Tune these if the drone oscillates or overshoots during navigation.
+    # Start conservative; increase kp_pos if response is sluggish.
+    kp_pos: [2.0, 2.0, 3.0]           # Position proportional [x, y, z]
+    kd_pos: [0.5, 0.5, 0.5]           # Position derivative
+    kp_vel: [3.0, 3.0, 3.0]           # Velocity proportional
+    ki_pos: [0.01, 0.01, 0.01]        # Position integral (anti-windup)
+
+    # ── Controller frequency ─────────────────────────────────────────────
+    control_freq: 30.0       # Hz

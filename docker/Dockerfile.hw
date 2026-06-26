@@ -1,70 +1,115 @@
-# =============================================================
-# Dockerfile.vio
-# =============================================================
-# PURPOSE  : OpenVINS Visual-Inertial Odometry — Phase 3+
-# PLATFORM : x86_64 (sim) / ARM64 cross-compiled (real, Phase 5)
+# =============================================================================
+# Dockerfile.hw
+# =============================================================================
+# Hardware companion computer image — targets ARM64 (Orange Pi 5).
+# Includes: RealSense D435i driver + OpenVINS + Aerostack2 Pixhawk platform.
 #
-# OpenVINS subscribes to:
-#   /camera/image_raw          (monocular or stereo)
-#   /camera/imu                (IMU at ~200Hz)
+# RealSense firmware 5.17.3.10 requires librealsense SDK >= v2.58.2.
 #
-# OpenVINS publishes:
-#   /openvins/odometry         (nav_msgs/Odometry, ENU frame)
+# Cross-compilation: build on x86_64 with:
+#   docker buildx build --platform linux/arm64 -f docker/Dockerfile.hw .
 #
-# The vio_bridge.py node in the ros2 container picks this up
-# and converts it to the PX4 format.
-#
-# STATUS: Phase 3 — built when needed (make build-vio)
-# =============================================================
+# Or build natively on the Orange Pi 5 (recommended — faster, simpler).
+# =============================================================================
 
-ARG ROS_DISTRO=humble
-ARG OPENVINS_BRANCH=master
+FROM ros:humble-ros-base
 
-FROM osrf/ros:${ROS_DISTRO}-desktop
+LABEL org.opencontainers.image.title="quad/hw-stack" \
+      org.opencontainers.image.description="Hardware: RealSense D435i + OpenVINS + AS2 Pixhawk (ARM64)" \
+      org.opencontainers.image.vendor="quad-drone-project"
 
-ARG ROS_DISTRO
-ARG OPENVINS_BRANCH
-LABEL description="OpenVINS ${OPENVINS_BRANCH} on ROS2 ${ROS_DISTRO}"
+ARG DEBIAN_FRONTEND=noninteractive
+# Firmware 5.17.3.10 requires SDK >= 2.58.2
+ARG LIBREALSENSE_VERSION=2.58.2
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# ── System Dependencies ───────────────────────────────────────
+# ── System prerequisites ──────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake \
-    build-essential \
-    git \
-    libeigen3-dev \
-    libopencv-dev \
-    python3-colcon-common-extensions \
-    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
-    ros-${ROS_DISTRO}-rviz2 \
-    ros-${ROS_DISTRO}-image-transport \
-    ros-${ROS_DISTRO}-cv-bridge \
+        curl \
+        gnupg2 \
+        lsb-release \
+        software-properties-common \
+        apt-transport-https \
+        ca-certificates \
+        udev \
+        usbutils \
+        libusb-1.0-0-dev \
+        git \
+        python3-pip \
+        tmux \
+        vim \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Build OpenVINS ────────────────────────────────────────────
-# OpenVINS uses a standard ROS2 colcon workspace.
-# We clone only the main branch (no heavy history).
-RUN mkdir -p /openvins_ws/src && \
-    cd /openvins_ws/src && \
-    echo "==> Cloning OpenVINS @ ${OPENVINS_BRANCH} ..." && \
-    git clone \
-        --depth 1 \
-        --branch ${OPENVINS_BRANCH} \
-        https://github.com/rpng/open_vins.git && \
-    echo "==> Building OpenVINS ..." && \
-    . /opt/ros/${ROS_DISTRO}/setup.sh && \
-    cd /openvins_ws && \
-    colcon build \
-        --cmake-args -DCMAKE_BUILD_TYPE=Release && \
-    echo "==> OpenVINS build complete."
+# ── Intel RealSense SDK v2.58.2 (matches firmware 5.17.3.10) ─────────────
+# Add Intel librealsense apt repository.
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp \
+       | tee /etc/apt/keyrings/librealsense.pgp > /dev/null \
+    && echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] \
+       https://librealsense.intel.com/Debian/apt-repo \
+       $(lsb_release -cs) main" \
+       | tee /etc/apt/sources.list.d/librealsense.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+         librealsense2=${LIBREALSENSE_VERSION}-* \
+         librealsense2-dkms \
+         librealsense2-utils \
+         librealsense2-dev \
+         librealsense2-dbg \
+    && rm -rf /var/lib/apt/lists/*
 
-# ── Environment ───────────────────────────────────────────────
-RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc && \
-    echo "source /openvins_ws/install/setup.bash" >> /etc/bash.bashrc && \
-    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /etc/bash.bashrc
+# ── ROS 2 RealSense wrapper ───────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-realsense2-camera \
+        ros-humble-realsense2-description \
+        ros-humble-image-transport \
+        ros-humble-image-transport-plugins \
+        ros-humble-cv-bridge \
+    && rm -rf /var/lib/apt/lists/*
 
+# ── OpenVINS VIO ──────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-openvins \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Aerostack2 — Pixhawk platform + behaviours ───────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-as2-platform-pixhawk \
+        ros-humble-as2-state-estimator \
+        ros-humble-as2-motion-controller \
+        ros-humble-as2-controller-plugin-differential-flatness \
+        ros-humble-as2-controller-plugin-pid-speed-controller \
+        ros-humble-as2-behaviors-motion \
+        ros-humble-as2-python-api \
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-cyclonedds \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── pymavlink for parameter upload script ─────────────────────────────────
+RUN pip3 install --no-cache-dir \
+        pymavlink \
+        pyserial \
+        pyyaml \
+        numpy
+
+# ── udev rules for RealSense USB access without root ─────────────────────
+# These rules are normally installed by the librealsense package,
+# but in containers we need to ensure they are present.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        udev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── tmux config ───────────────────────────────────────────────────────────
+RUN echo "set -g mouse on\nset -g history-limit 50000" > /root/.tmux.conf
+
+# ── Environment ───────────────────────────────────────────────────────────
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV DISPLAY=""
 
-# Default: keep alive. OpenVINS is launched via ros2 launch command.
-CMD ["sleep", "infinity"]
+# ── Shell helpers ─────────────────────────────────────────────────────────
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
+    && echo "source /ros2_ws/install/setup.bash 2>/dev/null || true" >> /root/.bashrc
+
+VOLUME ["/ros2_ws", "/config", "/dev"]
+
+WORKDIR /ros2_ws
+CMD ["/bin/bash"]
