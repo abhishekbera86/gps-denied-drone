@@ -1,8 +1,10 @@
 # 🚁 GPS-Denied Autonomous Quadcopter Stack
 
-> **PX4 v1.14 + ROS2 Humble + OpenVINS VIO — Fully Containerized**
+> **PX4 v1.14.3 + ROS 2 Humble + Aerostack2 + OpenVINS VIO — Fully Containerised**
 
-A fully Docker-based autonomous quadcopter system that flies **without GPS** using Visual-Inertial Odometry (VIO). Designed for simulation-first development with a clean path to real hardware (Orange Pi 5 + RealSense D435i + Pixhawk).
+A fully Docker-based autonomous quadcopter stack that flies **without GPS** using Visual-Inertial Odometry (OpenVINS + RealSense D435i). Built on the **Aerostack2** framework — zero compilation required on the host machine. Designed for simulation-first development with a clean Sim-to-Real path to physical hardware (Orange Pi 5 + RealSense D435i + Pixhawk).
+
+**GitHub**: [github.com/abhishekbera86/quad-drone-gps-denied](https://github.com/abhishekbera86/quad-drone-gps-denied)
 
 ---
 
@@ -83,11 +85,11 @@ PX4 Position Controller → ESCs → Motors
 | Component | Version | Why pinned |
 |---|---|---|
 | PX4 Autopilot | v1.14.3 | Stable, well-documented |
-| px4_msgs | release/1.14 | **Must match PX4 version** (DDS compatibility) |
-| ROS2 | Humble (LTS) | Long-term support until 2027 |
+| Aerostack2 | nightly-humble | Full autonomy framework — pre-built |
+| ROS 2 | Humble (LTS) | Long-term support until 2027 |
 | DDS | CycloneDDS | Most reliable with PX4 on host network |
-| VIO | OpenVINS (master) | Native ROS2, supports D435i |
-| RealSense SDK | v2.55.1 | Tested on ARM64 |
+| VIO | OpenVINS (apt) | Native ROS 2, supports D435i |
+| RealSense SDK | **v2.58.2** | Required for firmware 5.17.3.10 |
 
 ---
 
@@ -118,27 +120,29 @@ PX4 Position Controller → ESCs → Motors
 
 ## Quick Start
 
-### 3 Commands to Fly in Simulation
+### 4 Commands to Fly in Simulation (no GPU required)
 
 ```bash
-# 1. One-time host setup (install Docker, configure X11)
+# 1. One-time host setup (installs Docker, configures groups)
 bash scripts/setup_host.sh
 
-# 2. Build Docker images (takes ~35 min first time, cached after)
+# 2. Build Docker images (~5-10 min first time — no compilation on host!)
 make build
 
-# 3. Start the simulation stack
+# 3. Start simulation stack (PX4 SITL headless + Aerostack2 + DDS Agent)
 make sim-up
+
+# 4. Wait ~60s for PX4 to boot, then launch Aerostack2 nodes
+make health       # all green?
+make as2-launch   # opens tmux with all AS2 nodes
 ```
 
-Then in a second terminal:
+Then run the autonomous GPS-denied mission:
 
 ```bash
-# Start PX4 SITL inside the container
-make px4-start
-
-# Wait ~30 seconds, then check everything is working
-make health
+# Uploads EKF2 VIO parameters, then runs the square mission
+make params-upload
+make mission
 ```
 
 ---
@@ -156,30 +160,32 @@ px4_docker_ws/
 ├── docker-compose.yml         ← Service definitions (profiles: sim, vio, hw)
 │
 ├── docker/
-│   ├── Dockerfile.px4         ← PX4 v1.14 SITL + Gazebo Garden
-│   ├── Dockerfile.ros2        ← ROS2 Humble + px4_msgs + uXRCE-DDS Agent
-│   ├── Dockerfile.vio         ← OpenVINS (Phase 3+)
-│   └── Dockerfile.hw          ← RealSense ARM64 for Orange Pi (Phase 5)
+│   ├── Dockerfile.px4_sitl    ← px4io base + PX4 v1.14.3 SITL baked in (3-5 min)
+│   ├── Dockerfile.as2         ← aerostack2/nightly-humble + apt AS2 packages
+│   ├── Dockerfile.vio         ← ros:humble + apt OpenVINS
+│   └── Dockerfile.hw          ← ARM64: librealsense v2.58.2 + AS2 + OpenVINS
 │
 ├── ros2_ws/src/
-│   ├── quad_core/             ← AUTONOMY CODE (sim-to-real, never changes)
-│   │   └── quad_core/
-│   │       ├── offboard_controller.py   ← Phase 2
-│   │       ├── mission_planner.py       ← Phase 3
-│   │       └── vio_bridge.py            ← Phase 4
+│   ├── quad_core/             ← SHARED AUTONOMY (identical in sim AND real)
+│   │   ├── mission.py                   ← Aerostack2 Python API GPS-denied mission
+│   │   └── config/
+│   │       ├── ekf2_vio.params          ← PX4 EKF2 GPS-denied parameters
+│   │       └── vio_d435i.yaml           ← OpenVINS D435i calibration
 │   │
-│   ├── quad_sim/              ← SIMULATION ONLY (launch + config)
-│   │   ├── launch/
-│   │   │   ├── sim_base.launch.py       ← Phase 1
-│   │   │   ├── sim_offboard.launch.py   ← Phase 2
-│   │   │   └── sim_vio.launch.py        ← Phase 4
-│   │   └── config/sim_params.yaml
+│   ├── quad_sim/              ← SIMULATION ONLY (launch files + YAML configs)
+│   │   ├── launch_as2.bash              ← tmux-based AS2 node launcher
+│   │   └── config/
+│   │       ├── world.yaml               ← Gazebo world + drone spawn
+│   │       ├── as2_platform_sim.yaml    ← UDP:8888 to PX4 SITL
+│   │       ├── state_estimator_sim.yaml ← raw_odometry plugin
+│   │       └── motion_controller_sim.yaml
 │   │
-│   └── quad_real/             ← HARDWARE ONLY (launch + config)
-│       ├── launch/
-│       │   ├── real_base.launch.py      ← Phase 5
-│       │   └── real_vio.launch.py       ← Phase 5
-│       └── config/real_params.yaml
+│   └── quad_real/             ← HARDWARE ONLY (launch files + serial configs)
+│       ├── launch_as2.bash              ← hardware node launcher
+│       └── config/
+│           ├── as2_platform_hw.yaml     ← serial /dev/ttyUSB0 @ 921600
+│           ├── state_estimator_hw.yaml
+│           └── realsense_hw.yaml        ← D435i camera parameters
 │
 ├── config/
 │   ├── px4_params/
@@ -403,12 +409,12 @@ ros2 topic echo /fmu/out/vehicle_status
 
 ## Docker Services
 
-| Service | Profile | Description |
-|---|---|---|
-| `px4` | `sim` | PX4 v1.14 SITL + Gazebo Garden. Build takes ~35 min (cached). |
-| `ros2` | `sim` | ROS2 Humble + px4_msgs + uXRCE-DDS Agent. Bridge starts automatically. |
-| `openvins` | `vio` | OpenVINS VIO. Added in Phase 3. |
-| `realsense` | `hw` | RealSense + OpenVINS + quad_core on Orange Pi. Phase 5. |
+| Service | Profile | Base Image | Description |
+|---|---|---|---|
+| `px4_sitl` | `sim` | `px4io/px4-dev-simulation-jammy` | PX4 v1.14.3 + Gazebo Garden (headless). SITL baked in. |
+| `aerostack2` | `sim` | `aerostack2/nightly-humble` | DDS Agent + all AS2 nodes via apt. No build needed. |
+| `openvins` | `vio` | `ros:humble-ros-base` | OpenVINS VIO — apt installed. |
+| `hw_stack` | `hw` | `ros:humble-ros-base` (ARM64) | librealsense v2.58.2 + AS2 + OpenVINS. Orange Pi. |
 
 **Networking**: All services use `network_mode: host`. This is mandatory for DDS multicast discovery to work between containers and the host.
 
@@ -654,9 +660,12 @@ config: tune EKF2_EV_DELAY to 75ms  ← config change
 ### Push to GitHub
 
 ```bash
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git branch -M main
-git push -u origin main --tags
+# Remote is already configured:
+git remote -v
+# origin  https://github.com/abhishekbera86/quad-drone-gps-denied.git
+
+# Push all branches and tags
+git push -u origin master --tags
 ```
 
 ---
