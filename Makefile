@@ -53,13 +53,10 @@ help:
 # BUILD (one-time)
 # =============================================================================
 build:
-	@echo "==> Building Docker images..."
-	@echo "    First build: ~5-10 min (downloads prebuilt base images)"
+	@echo "==> Building Docker image (aerostack2/nightly-humble base + extras)..."
+	@echo "    First build: ~5-10 min (MicroXRCE agent + as2_platform_pixhawk from source)"
 	@echo "    Subsequent builds: instant (Docker layer cache)"
-	DOCKER_BUILDKIT=1 docker compose build
-
-build-px4:
-	DOCKER_BUILDKIT=1 docker compose build px4_sitl
+	DOCKER_BUILDKIT=1 docker compose build aerostack2
 
 build-as2:
 	DOCKER_BUILDKIT=1 docker compose build aerostack2
@@ -79,15 +76,17 @@ build-hw:
 #   Terminal 2:  make mission  (run the mission once sim is ready)
 #
 # What it does internally:
-#   1. docker compose up  → starts px4_sitl + aerostack2 containers
-#   2. colcon build       → builds quad_core + quad_sim packages inside container
-#   3. Waits for PX4 DDS topics to appear (PX4 is ready)
-#   4. ros2 launch quad_sim sim.launch.py  ← THE actual ROS 2 launch file
-#      (quad_sim/launch/sim.launch.py — composes all 4 AS2 nodes)
+#   1. docker compose up         → starts ONE aerostack2 container
+#   2. colcon build (inside)     → registers quad_core + quad_sim with ROS 2
+#   3. ros2 launch quad_sim sim.launch.py  (THE actual ROS 2 launch file)
+#      └ as2_platform_multirotor_simulator  (no PX4, no Gazebo, no GPU)
+#      └ as2_state_estimator (ground_truth)
+#      └ as2_motion_controller
+#      └ as2_behaviors_motion
 #
 sim:
 	@echo ""
-	@echo "==> Starting containers..."
+	@echo "==> Starting aerostack2 container..."
 	@docker compose --profile sim up -d
 	@echo ""
 	@echo "==> Launching simulation world (this terminal stays live)"
