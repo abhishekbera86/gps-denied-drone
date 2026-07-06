@@ -74,20 +74,26 @@ build-hw:
 # =============================================================================
 # SIMULATION — main workflow target
 # =============================================================================
+# TWO-TERMINAL WORKFLOW:
+#   Terminal 1:  make sim      (stays in foreground — shows all ROS 2 node logs)
+#   Terminal 2:  make mission  (run the mission once sim is ready)
 #
-# Starts PX4 SITL + Aerostack2 containers, then waits for PX4 to boot
-# and launches all AS2 nodes automatically. One command. No manual steps.
+# What it does internally:
+#   1. docker compose up  → starts px4_sitl + aerostack2 containers
+#   2. colcon build       → builds quad_core + quad_sim packages inside container
+#   3. Waits for PX4 DDS topics to appear (PX4 is ready)
+#   4. ros2 launch quad_sim sim.launch.py  ← THE actual ROS 2 launch file
+#      (quad_sim/launch/sim.launch.py — composes all 4 AS2 nodes)
 #
 sim:
 	@echo ""
-	@echo "==> [1/2] Starting containers (PX4 SITL + Aerostack2)..."
+	@echo "==> Starting containers..."
 	@docker compose --profile sim up -d
 	@echo ""
-	@echo "==> [2/2] Launching simulation world (waiting for PX4 + starting AS2 nodes)..."
-	@echo "    This takes ~60s on first start."
+	@echo "==> Launching simulation world (this terminal stays live)"
+	@echo "    Open a NEW terminal and run: make mission"
 	@echo ""
-	@docker exec aerostack2 bash /scripts/launch_sim.sh
-	@echo ""
+	docker exec -it aerostack2 bash /scripts/launch_sim.sh
 
 # =============================================================================
 # VIO SIMULATION — with OpenVINS GPS-denied estimation
@@ -123,11 +129,16 @@ stop:
 # =============================================================================
 # HARDWARE (Orange Pi 5 — run ON the companion computer)
 # =============================================================================
+# What it does:
+#   1. docker compose up  → starts hw_stack container
+#   2. colcon build       → builds packages inside container
+#   3. ros2 launch quad_real hw.launch.py  ← THE actual ROS 2 launch file
+#      (quad_real/launch/hw.launch.py — RealSense + AS2 serial Pixhawk bridge)
+#
 hw:
 	@echo "==> Starting hardware stack (run this ON the Orange Pi 5)..."
 	@docker compose --profile hw up -d
-	@docker exec hw_stack bash /ros2_ws/src/quad_real/launch_as2.bash
-	@echo ""
+	@docker exec -it hw_stack bash /scripts/launch_hw.sh
 
 # =============================================================================
 # DEBUGGING
