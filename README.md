@@ -238,7 +238,66 @@ Intel RealSense D435i  ──(USB 3.0)──>  Orange Pi 5  ──(TELEM2 UART)�
 
 ---
 
-## 6. Commands Reference Cheat Sheet
+## 6. Optional: 3D Visualisation & Graphical Tools (RViz / Gazebo)
+
+Because the development stack runs completely inside a headless Docker container to remain lightweight and GPU-agnostic, graphical tools are disabled by default. If your host computer has a graphical monitor (X11) and you want to view a 3D simulation or sensor feeds, follow the steps below.
+
+### 6.1. Visualising Flight Data in RViz 2
+
+Since all ROS 2 nodes communicate via Cyclone DDS over host networking, the topics running inside your container are immediately visible on your host machine.
+
+#### Option A: Running RViz 2 directly on the Host (Easiest)
+If you have ROS 2 Humble installed on your host Linux system:
+1. Open a new terminal on your host machine.
+2. Launch RViz 2:
+   ```bash
+   rviz2
+   ```
+3. Set **Fixed Frame** to `drone0/odom` or `earth`.
+4. Click **Add** (bottom left), select the **By topic** tab, and add:
+   * **`/drone0/self_localization/pose`** (Displays a coordinate axis of the drone's estimated position)
+   * **`/drone0/sensor_measurements/imu`** (Displays acceleration/angular velocity vectors)
+
+#### Option B: Running RViz 2 via Docker Container
+If your host does NOT have ROS 2 installed, you can launch a GUI-forwarded RViz container:
+1. Allow local connections to your host's X11 display:
+   ```bash
+   xhost +local:docker
+   ```
+2. Run RViz inside a temporary ROS 2 Docker container with GUI forwarding:
+   ```bash
+   docker run -it --rm \
+     --net=host \
+     --ipc=host \
+     --env="DISPLAY" \
+     --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
+     osrf/ros:humble-desktop \
+     rviz2
+   ```
+
+---
+
+### 6.2. Switching to 3D Gazebo Simulation
+
+If you want a full 3D visual physics simulation (instead of the lightweight headless multirotor simulator), you can switch to **Gazebo Harmonic** or **Ignition Gazebo**. Note that this requires a GPU or high-end CPU on your host.
+
+To enable Gazebo:
+1. Update `ros2_ws/src/quad_sim/launch/sim.launch.py` to replace the `as2_platform_multirotor_simulator` node inclusion with `as2_platform_ign_gazebo`.
+2. Allow GUI forwarding in docker compose by editing `docker-compose.yml` to pass the local graphics card device and socket:
+   ```yaml
+   devices:
+     - /dev/dri:/dev/dri
+   environment:
+     - DISPLAY=${DISPLAY}
+     - QT_X11_NO_MITSHM=1
+   volumes:
+     - /tmp/.X11-unix:/tmp/.X11-unix:rw
+   ```
+3. Launch `make sim` as usual. The Gazebo GUI window will open on your host screen.
+
+---
+
+## 7. Commands Reference Cheat Sheet
 
 | Command | Action | Location |
 |---|---|---|
