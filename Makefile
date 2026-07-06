@@ -115,6 +115,7 @@ mission:
 	@echo "==> Running GPS-denied autonomous mission..."
 	@docker exec -it aerostack2 bash -c \
 		"source /opt/ros/humble/setup.bash && \
+		 source /root/aerostack2_ws/install/setup.bash && \
 		 python3 /ros2_ws/src/quad_core/mission.py"
 
 # =============================================================================
