@@ -8,7 +8,7 @@
 #   ros2 launch quad_real hw.launch.py
 # =============================================================================
 
-set -euo pipefail
+set -eo pipefail
 
 DRONE_NS="${DRONE_NAMESPACE:-drone0}"
 SERIAL_DEV="${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}"

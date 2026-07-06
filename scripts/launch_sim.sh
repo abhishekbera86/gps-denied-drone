@@ -13,7 +13,7 @@
 # In a second terminal, run:  make mission
 # =============================================================================
 
-set -euo pipefail
+set -eo pipefail
 
 DRONE_NS="${DRONE_NAMESPACE:-drone0}"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'

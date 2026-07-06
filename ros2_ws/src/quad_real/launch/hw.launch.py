@@ -148,7 +148,7 @@ def generate_launch_description():
                 launch_arguments={
                     "namespace":    ns,
                     "use_sim_time": "false",
-                    "plugin":       "raw_odometry",
+                    "plugin_name":  "raw_odometry",
                     "config":       estimator_config,
                     "log_level":    log_level,
                 }.items(),
@@ -167,7 +167,7 @@ def generate_launch_description():
                 launch_arguments={
                     "namespace":    ns,
                     "use_sim_time": "false",
-                    "plugin":       "differential_flatness_controller",
+                    "plugin_name":  "differential_flatness_controller",
                     "log_level":    log_level,
                 }.items(),
             )
@@ -180,12 +180,16 @@ def generate_launch_description():
         actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    os.path.join(as2_behaviors_dir, "launch", "motion_behaviors_launch.py")
+                    os.path.join(as2_behaviors_dir, "launch", "composable_motion_behaviors.launch.py")
                 ),
                 launch_arguments={
                     "namespace":    ns,
                     "use_sim_time": "false",
                     "log_level":    log_level,
+                    "follow_path_plugin_name": "follow_path_plugin_position",
+                    "go_to_plugin_name":       "go_to_plugin_position",
+                    "land_plugin_name":        "land_plugin_speed",
+                    "takeoff_plugin_name":     "takeoff_plugin_speed",
                 }.items(),
             )
         ],

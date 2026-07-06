@@ -111,11 +111,12 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(estimator_dir, "launch",
-                                 "ground_truth_state_estimator.launch.py")
+                                 "state_estimator_launch.py")
                 ),
                 launch_arguments={
                     "namespace":    ns,
                     "use_sim_time": "false",
+                    "plugin_name":  "ground_truth",
                     "log_level":    log_level,
                 }.items(),
             )
@@ -130,20 +131,18 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(controller_dir, "launch",
-                                 "differential_flatness_controller.launch.py")
+                                 "controller_launch.py")
                 ),
                 launch_arguments={
                     "namespace":    ns,
                     "use_sim_time": "false",
+                    "plugin_name":  "differential_flatness_controller",
                     "log_level":    log_level,
                 }.items(),
             )
         ],
     )
 
-    # ── 4. Motion Behaviours ─────────────────────────────────────────────
-    # ROS 2 action servers: Takeoff, Land, GoTo, FollowPath
-    # These are called by mission.py via the AS2 Python API.
     behaviors_launch = TimerAction(
         period=6.0,
         actions=[
@@ -156,6 +155,10 @@ def generate_launch_description():
                     "namespace":    ns,
                     "use_sim_time": "false",
                     "log_level":    log_level,
+                    "follow_path_plugin_name": "follow_path_plugin_position",
+                    "go_to_plugin_name":       "go_to_plugin_position",
+                    "land_plugin_name":        "land_plugin_speed",
+                    "takeoff_plugin_name":     "takeoff_plugin_speed",
                 }.items(),
             )
         ],
