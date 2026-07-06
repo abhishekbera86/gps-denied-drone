@@ -75,8 +75,17 @@ make sim
 
 *Leave this terminal running and open a **new terminal session**.*
 
-### Step 4 — Run the Autonomous Mission
-In the new terminal session, execute the pre-built mission:
+### Step 4 — Open the Simulation Viewer (Optional but Recommended)
+To visualize the state, position, velocity, and orientation of the drone in real-time inside your terminal, run:
+
+```bash
+make view
+```
+
+This launches the **Aerostack2 Alphanumeric Viewer**, a dashboard that prints real-time coordinates and control states without needing a GPU or graphical window.
+
+### Step 5 — Run the Autonomous Mission
+In another terminal session, execute the pre-built mission:
 
 ```bash
 # Ensure you are in the cloned repository directory
@@ -94,7 +103,7 @@ make mission
 5. Returns to the takeoff origin (0, 0).
 6. **Lands** safely and **disarms**.
 
-### Step 5 — Stop and Clean Up
+### Step 6 — Stop and Clean Up
 To stop the simulation nodes and clean up the container resources, run:
 
 ```bash
@@ -235,6 +244,7 @@ Intel RealSense D435i  ──(USB 3.0)──>  Orange Pi 5  ──(TELEM2 UART)�
 |---|---|---|
 | `make build` | Builds the default Aerostack2 image | Dev Host |
 | `make sim` | Starts container and launches the simulation nodes | Dev Host |
+| `make view` | Launches the live alphanumeric terminal viewer/dashboard | Dev Host / OPi 5 |
 | `make mission` | Executes the high-level Python mission script | Dev Host / OPi 5 |
 | `make stop` | Shuts down and cleans up all running containers | Dev Host / OPi 5 |
 | `make shell` | Enters an interactive bash terminal inside the running container | Dev Host / OPi 5 |

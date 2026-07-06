@@ -16,7 +16,7 @@ include .env
 export
 
 .PHONY: help build build-px4 build-as2 build-vio build-hw \
-        sim stop mission \
+        sim stop mission view \
         vio hw \
         shell logs ps health \
         clean clean-all
@@ -32,6 +32,7 @@ help:
 	@echo "  ╠══════════════════════════════════════════════╣"
 	@echo "  ║  DAILY WORKFLOW                              ║"
 	@echo "  ║    make sim        Launch simulation world   ║"
+	@echo "  ║    make view       Open live terminal viewer ║"
 	@echo "  ║    make mission    Run autonomous mission    ║"
 	@echo "  ║    make stop       Stop everything           ║"
 	@echo "  ╠══════════════════════════════════════════════╣"
@@ -114,6 +115,16 @@ mission:
 	@docker exec -it aerostack2 bash -c \
 		"source /opt/ros/humble/setup.bash && \
 		 python3 /ros2_ws/src/quad_core/mission.py"
+
+# =============================================================================
+# VIEW — launch the alphanumeric terminal dashboard
+# =============================================================================
+view:
+	@echo "==> Launching Aerostack2 terminal dashboard..."
+	@docker exec -it aerostack2 bash -c \
+		"source /opt/ros/humble/setup.bash && \
+		 source /root/aerostack2_ws/install/setup.bash && \
+		 ros2 run as2_alphanumeric_viewer as2_alphanumeric_viewer_node --ros-args -r __ns:=/drone0"
 
 # =============================================================================
 # STOP — shut down everything cleanly
