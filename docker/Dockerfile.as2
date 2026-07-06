@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
         ros-humble-rmw-cyclonedds-cpp \
         ros-humble-cyclonedds \
+        ros-humble-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python tools for mission scripts and param upload ─────────────────────

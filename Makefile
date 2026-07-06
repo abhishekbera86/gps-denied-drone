@@ -16,7 +16,7 @@ include .env
 export
 
 .PHONY: help build build-px4 build-as2 build-vio build-hw \
-        sim stop mission view \
+        sim stop mission view foxglove \
         vio hw \
         shell logs ps health \
         clean clean-all
@@ -33,6 +33,7 @@ help:
 	@echo "  ║  DAILY WORKFLOW                              ║"
 	@echo "  ║    make sim        Launch simulation world   ║"
 	@echo "  ║    make view       Open live terminal viewer ║"
+	@echo "  ║    make foxglove   Launch web 3D visualizer  ║"
 	@echo "  ║    make mission    Run autonomous mission    ║"
 	@echo "  ║    make stop       Stop everything           ║"
 	@echo "  ╠══════════════════════════════════════════════╣"
@@ -127,6 +128,15 @@ view:
 		 ros2 run as2_alphanumeric_viewer as2_alphanumeric_viewer_node --ros-args -r __ns:=/drone0"
 
 # =============================================================================
+# FOXGLOVE — web-based 3D visualization bridge
+# =============================================================================
+foxglove:
+	@echo "==> Launching Foxglove Bridge..."
+	@echo "    After it starts, open: https://studio.foxglove.dev"
+	@echo "    Select 'Foxglove WebSocket' and connect to: ws://localhost:8765"
+	@docker exec -it aerostack2 bash -c \
+		"source /opt/ros/humble/setup.bash && \
+		 ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
 # STOP — shut down everything cleanly
 # =============================================================================
 stop:

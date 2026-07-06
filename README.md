@@ -238,15 +238,46 @@ Intel RealSense D435i  ──(USB 3.0)──>  Orange Pi 5  ──(TELEM2 UART)�
 
 ---
 
-## 6. Optional: 3D Visualisation & Graphical Tools (RViz / Gazebo)
+## 6. Optional: 3D Visualisation & Graphical Tools (Foxglove / RViz / Gazebo)
 
-Because the development stack runs completely inside a headless Docker container to remain lightweight and GPU-agnostic, graphical tools are disabled by default. If your host computer has a graphical monitor (X11) and you want to view a 3D simulation or sensor feeds, follow the steps below.
+### 6.1. What is `as2_platform_multirotor_simulator`?
+The **`as2_platform_multirotor_simulator`** is a built-in mathematical flight dynamics engine developed natively for Aerostack2. 
+* **How it works**: Instead of launching a heavy 3D rendering environment (like Gazebo or Webots) to compute gravity, aerodynamics, thrust, and collision forces, it models the drone namespace mathematically as a rigid body.
+* **Why we use it**: Because it does not load meshes or render pixels, it runs 100% headlessly inside a terminal. It requires **no graphics card (GPU)**, uses negligible CPU/RAM, and starts in less than a second—making it perfect for server, terminal-only, or Docker-based workflows.
 
-### 6.1. Visualising Flight Data in RViz 2
+---
 
-Since all ROS 2 nodes communicate via Cyclone DDS over host networking, the topics running inside your container are immediately visible on your host machine.
+### 6.2. Web-Based 3D Visualisation via Foxglove Studio (Recommended for Docker-Only)
+If you do not have ROS 2 installed on your host system and want to avoid complex GUI/X11 socket forwarding, you can use **Foxglove Studio**. It runs in any web browser and connects to a WebSocket bridge running inside the container.
 
-#### Option A: Running RViz 2 directly on the Host (Easiest)
+1. **Rebuild the Container**: (if you have not rebuilt since adding the foxglove package):
+   ```bash
+   make build
+   ```
+2. **Start the simulation world**:
+   ```bash
+   make sim
+   ```
+3. **Launch the Foxglove Bridge**: Open a new terminal on your host and run:
+   ```bash
+   make foxglove
+   ```
+4. **Connect to the Viewer**:
+   * Open your host web browser and navigate to: **[https://studio.foxglove.dev](https://studio.foxglove.dev)**
+   * Select **Open Connection**.
+   * Choose **Foxglove WebSocket**.
+   * Enter the WebSocket URL: **`ws://localhost:8765`** and click **Connect**.
+5. **Add 3D/Telemetries Panels**:
+   * Add a **3D Panel** to visualize coordinate frame transformations (TFs) and the drone's trajectory path.
+   * Add **Plot Panels** to graph position `/drone0/self_localization/pose` in real-time.
+
+---
+
+### 6.3. Visualising Flight Data in RViz 2
+
+If you want to run RViz 2, you can do so either directly on your host machine or via a dedicated Docker container:
+
+#### Option A: Running RViz 2 directly on the Host
 If you have ROS 2 Humble installed on your host Linux system:
 1. Open a new terminal on your host machine.
 2. Launch RViz 2:
@@ -258,7 +289,7 @@ If you have ROS 2 Humble installed on your host Linux system:
    * **`/drone0/self_localization/pose`** (Displays a coordinate axis of the drone's estimated position)
    * **`/drone0/sensor_measurements/imu`** (Displays acceleration/angular velocity vectors)
 
-#### Option B: Running RViz 2 via Docker Container
+#### Option B: Running RViz 2 via Docker Container (Host ROS-free)
 If your host does NOT have ROS 2 installed, you can launch a GUI-forwarded RViz container:
 1. Allow local connections to your host's X11 display:
    ```bash
