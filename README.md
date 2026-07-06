@@ -24,7 +24,7 @@ newgrp docker
 
 ## Quick Start
 
-### Step 1 — Build (one time only, ~5-10 min)
+### Step 1 — Build (one time only, ~2-3 min)
 
 ```bash
 git clone https://github.com/abhishekbera86/gps-denied-drone.git
@@ -39,10 +39,13 @@ make sim
 ```
 
 This does everything automatically:
-- Starts PX4 SITL + Gazebo (headless)
-- Starts the Aerostack2 autonomy stack
-- Waits for PX4 to boot, then starts all control nodes
-- Prints **✓ Simulation world is READY** when done
+- Starts the Aerostack2 container (one container — no PX4, no Gazebo, no GPU)
+- Builds the `quad_sim` and `quad_core` ROS 2 packages inside the container
+- Launches all autonomy nodes via `ros2 launch quad_sim sim.launch.py`
+- Prints **✓ All Aerostack2 nodes are running** when ready
+
+This terminal **stays live** and shows all ROS 2 node logs.
+Open a **second terminal** for the next step.
 
 ### Step 3 — Run the mission
 

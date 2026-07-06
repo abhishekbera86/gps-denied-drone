@@ -1,106 +1,58 @@
 # =============================================================================
-# Dockerfile.as2
+# Dockerfile.as2 — Simulation Container
 # =============================================================================
-# Aerostack2 simulation + hardware container.
+# Base: aerostack2/nightly-humble
 #
-# Base image: aerostack2/nightly-humble
-# Pre-installed at /root/aerostack2_ws/install/:
-#   - as2_platform_multirotor_simulator  (simulation — NO PX4/Gazebo needed)
-#   - as2_platform_gazebo                (Gazebo plugin library)
-#   - as2_state_estimator
-#   - as2_motion_controller
-#   - as2_behaviors_motion
-#   - as2_python_api
-#   - ... all core AS2 packages
+# Pre-installed in base image (DO NOT reinstall):
+#   - colcon, cmake, build-essential, g++, tmux  ← already there
+#   - as2_platform_multirotor_simulator           ← used for simulation
+#   - as2_state_estimator, as2_motion_controller  ← already there
+#   - as2_behaviors_motion, as2_python_api        ← already there
 #
-# We add ON TOP:
-#   - MicroXRCE-DDS Agent (for PX4 bridge, Phase 2+)
-#   - as2_platform_pixhawk (built from source — not in nightly image)
-#   - pymavlink, tmux, colcon tools
+# We add ONLY what the base is missing:
+#   - pymavlink         (for upload_px4_params.py script)
+#   - CycloneDDS        (preferred RMW for reliability)
+#   - python3-pip       (missing in base)
+#
+# MicroXRCE-DDS Agent and as2_platform_pixhawk are NOT needed for simulation.
+# They live in Dockerfile.hw (Orange Pi 5 hardware container only).
 # =============================================================================
 
 FROM aerostack2/nightly-humble:latest
 
 LABEL org.opencontainers.image.title="quad/aerostack2" \
-      org.opencontainers.image.description="Aerostack2 Humble — multirotor sim + Pixhawk platform" \
+      org.opencontainers.image.description="Aerostack2 Humble — simulation stack" \
       org.opencontainers.image.vendor="quad-drone-project"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# ── Extra tools (NOT AS2 packages — those are pre-installed in base) ──────
+# ── Only install what the base image is actually missing ──────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        tmux \
         python3-pip \
-        python3-colcon-common-extensions \
-        python3-rosdep \
         ros-humble-rmw-cyclonedds-cpp \
         ros-humble-cyclonedds \
-        wget \
-        curl \
-        vim \
-        git \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python tools ──────────────────────────────────────────────────────────
+# ── Python tools for mission scripts and param upload ─────────────────────
 RUN pip3 install --no-cache-dir \
         pymavlink \
         pyserial \
         pyyaml \
         numpy
 
-# ── MicroXRCE-DDS Agent — for PX4 real hardware bridge ───────────────────
-# Not in the AS2 nightly image. Build from source.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        cmake \
-        g++ \
-        libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /microxrce_ws && cd /microxrce_ws \
-    && git clone --depth 1 --branch v2.4.2 \
-       https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
-    && cd Micro-XRCE-DDS-Agent \
-    && mkdir build && cd build \
-    && cmake .. -DCMAKE_BUILD_TYPE=Release \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig \
-    && echo "MicroXRCEAgent installed at: $(which MicroXRCEAgent)"
-
-# ── as2_platform_pixhawk — for real Pixhawk hardware ─────────────────────
-# Clone and build inside the aerostack2_ws so it sources correctly.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ros-humble-mavros-msgs \
-        ros-humble-geographic-msgs \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /px4_platform_ws/src && cd /px4_platform_ws/src \
-    && git clone --depth 1 --branch humble \
-       https://github.com/aerostack2/as2_platform_pixhawk.git \
-    || git clone --depth 1 \
-       https://github.com/aerostack2/as2_platform_pixhawk.git
-
-RUN cd /px4_platform_ws \
-    && bash -c "source /opt/ros/humble/setup.bash && \
-                source /root/aerostack2_ws/install/setup.bash && \
-                colcon build --symlink-install \
-                  --packages-select as2_platform_pixhawk \
-                  --cmake-args -DCMAKE_BUILD_TYPE=Release" \
-    && echo "as2_platform_pixhawk built successfully"
-
-# ── tmux config ───────────────────────────────────────────────────────────
-RUN echo "set -g mouse on\nset -g history-limit 50000" > /root/.tmux.conf
-
 # ── Environment ───────────────────────────────────────────────────────────
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ENV DISPLAY=""
 ENV QT_QPA_PLATFORM=offscreen
 
-# ── Shell: source all workspaces on login ─────────────────────────────────
+# ── Source all workspaces on every bash session ───────────────────────────
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
     && echo "source /root/aerostack2_ws/install/setup.bash" >> /root/.bashrc \
-    && echo "source /px4_platform_ws/install/setup.bash 2>/dev/null || true" >> /root/.bashrc \
+    && echo "# Built quad packages (populated by make sim → colcon build)" >> /root/.bashrc \
     && echo "source /ros2_ws_build/install/setup.bash 2>/dev/null || true" >> /root/.bashrc
+
+# ── tmux config (tmux is already installed in base) ───────────────────────
+RUN echo "set -g mouse on\nset -g history-limit 50000" > /root/.tmux.conf
 
 VOLUME ["/ros2_ws", "/config", "/scripts"]
 WORKDIR /ros2_ws
