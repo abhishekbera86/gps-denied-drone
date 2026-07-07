@@ -41,6 +41,19 @@ RUN Tools/setup/ubuntu.sh --no-nuttx
 # build-only pass (see Makefile's check_px4_sitl_default / coverity_scan).
 RUN make px4_sitl_default
 
+# SITL-only airframe override — see the file for why (battery/power prearm
+# checks fail forever on the x500_depth model since it has no battery sim).
+# Copied to BOTH the ROMFS source tree (so it's part of the real source of
+# truth) and the already-compiled build/px4_sitl_default/etc output (PX4's
+# build step above copies ROMFS into that build dir at compile time, before
+# this layer runs — without this second copy the override would silently
+# have no effect until the next full recompile).
+COPY docker/px4_sitl_overrides/4002_gz_x500_depth.post \
+     ROMFS/px4fmu_common/init.d-posix/airframes/4002_gz_x500_depth.post
+RUN chmod +x ROMFS/px4fmu_common/init.d-posix/airframes/4002_gz_x500_depth.post \
+    && cp ROMFS/px4fmu_common/init.d-posix/airframes/4002_gz_x500_depth.post \
+          build/px4_sitl_default/etc/init.d-posix/airframes/4002_gz_x500_depth.post
+
 ENV PX4_HEADLESS=1 \
     PX4_SIM_SPEED_FACTOR=1.0
 

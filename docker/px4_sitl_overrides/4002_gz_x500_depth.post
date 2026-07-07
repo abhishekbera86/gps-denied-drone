@@ -1,0 +1,25 @@
+#!/bin/sh
+# =============================================================================
+# 4002_gz_x500_depth.post
+# =============================================================================
+# PX4 sources <autostart_file>.post automatically after the airframe config
+# (see rcS) — this is PX4's own supported hook for per-airframe overrides
+# without patching rcS or the airframe file itself.
+#
+# The x500_depth Gazebo model does not simulate battery/power telemetry, so
+# /fmu/out/battery_status_v1 never publishes. Commander's battery/power
+# prearm checks then fail forever and arming is permanently rejected
+# ("Resolve system health failures first"). CBRK_SUPPLY_CHK is PX4's
+# documented circuit breaker for exactly this: it disables both the battery
+# check and the power check. SITL-only — never set this on real hardware.
+# =============================================================================
+param set-default CBRK_SUPPLY_CHK 894281
+
+# The x500 airframe (sourced by x500_depth) sets NAV_DLL_ACT 2 (datalink-loss
+# failsafe → Return mode), and commander's rcAndDataLinkCheck makes a GCS
+# connection MANDATORY for arming whenever NAV_DLL_ACT > 0. This SITL rig is
+# offboard-only with no QGroundControl attached, so arming would be denied
+# forever ("No connection to the ground control station"). 0 is PX4's own
+# code default (commander_params.c). Real-hardware failsafe policy is a
+# deliberate Phase 4 decision — do not copy this to the Pixhawk blindly.
+param set-default NAV_DLL_ACT 0

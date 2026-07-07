@@ -94,58 +94,100 @@ of that lives inside the build containers.
 
 ---
 
-## 4. Quick Start
+## 4. Quick Start — Replicating on a Fresh Machine
+
+The full flow on any Linux box that has Docker (nothing else required):
 
 ```bash
+# Step 1 — clone THIS repo (the only repo you ever clone or touch)
 git clone https://github.com/abhishekbera86/gps-denied-drone.git
 cd gps-denied-drone
-make build      # first time only — compiles PX4 SITL + the ROS 2 bridge image
-make sim        # starts px4-sim + ros2-autonomy
+
+# Step 2 — build the two images (first time only)
+make build
+
+# Step 3 — start the simulation stack
+make sim
+
+# Step 4 — wait ~30-60 s (PX4's EKF2 estimator must converge after boot),
+#          then fly the takeoff-hover-land test in a second terminal
+make flight-test
 ```
 
-`make build` compiles two images:
-- `px4-sim` — clones PX4 v1.17.0, installs Gazebo Harmonic via PX4's own
-  `Tools/setup/ubuntu.sh`, and pre-compiles the `px4_sitl_default` SITL
-  target (~2–3 minutes on a modern 4-core CPU once Gazebo/toolchain
-  packages are cached; longer on the very first run).
+### What each step does
+
+`make build` compiles two images (expect ~15–40 min on the very first run,
+depending on CPU and network — later rebuilds hit Docker layer cache and
+take seconds):
+- `px4-sim` — clones PX4-Autopilot at the pinned `v1.17.0` tag from the
+  official repo, installs Gazebo Harmonic via PX4's own
+  `Tools/setup/ubuntu.sh`, pre-compiles the `px4_sitl_default` target, and
+  overlays this repo's SITL-only param file (see §5, issue 4).
 - `ros2-autonomy` — ROS 2 Humble + the Micro-XRCE-DDS-Agent (built from
-  source) + `px4_msgs`/`px4_ros_com` (colcon-built against PX4 v1.17.0
-  message definitions).
+  source at `v3.0.1`) + `px4_msgs` (`release/1.17`) / `px4_ros_com`
+  (`release/1.16`), colcon-built against PX4 v1.17.0 message definitions.
 
-`make sim` starts both containers. Check that PX4 booted cleanly:
-```bash
-make logs
+`make sim` starts both containers. The ros2-autonomy entrypoint auto-starts
+the Micro-XRCE-DDS-Agent, so the PX4 ↔ ROS 2 bridge comes up on its own —
+no manual step. Verify with `make logs`: you should see Gazebo Harmonic
+spawn `x500_depth_0` and `uxrce_dds_client` connect to `127.0.0.1:8888`.
+
+`make flight-test` colcon-builds the `common_control` package inside the
+container (source is live-mounted from `ros2_ws/src/` — edit on host, no
+image rebuild needed) and runs `offboard_control_node`, which:
+1. Streams the `OffboardControlMode` heartbeat + `TrajectorySetpoint` at 10 Hz
+2. Switches PX4 to offboard mode and arms (retrying once per second until
+   PX4 confirms via `vehicle_status` — right after boot PX4 rejects arming
+   until its preflight checks pass, so early retries are normal)
+3. Takes off to 2 m, hovers 5 s, lands, and PX4 auto-disarms on touchdown
+
+Expected output ends with:
 ```
-You should see Gazebo Harmonic spawn the `x500_depth_0` model and PX4's
-`uxrce_dds_client` connect to `127.0.0.1:8888`.
-
-### Bridging PX4 to ROS 2
-
-The Micro-XRCE-DDS-Agent isn't auto-started yet (Phase 1 will wire this into
-a proper launch file). For now, start it manually and verify the bridge:
-
-```bash
-docker exec -d ros2-autonomy bash -c "MicroXRCEAgent udp4 -p 8888"
-
-docker exec -it ros2-autonomy bash
-source /opt/ros/humble/setup.bash
-source /opt/px4_ros2_ws/install/setup.bash
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-ros2 topic list          # should show /fmu/in/* and /fmu/out/* topics
-ros2 topic hz /fmu/out/vehicle_odometry   # should report ~10-15 Hz
+[INFO] [...]: Armed and offboard — climbing to takeoff height
+[INFO] [...]: Reached takeoff height — hovering for 5.0s
+[INFO] [...]: Hover complete — landing
+[INFO] [...]: Landed and disarmed — mission complete
 ```
 
-### Stopping everything
+### Inspecting the running system
+
+```bash
+make shell            # bash inside ros2-autonomy (ROS 2 side)
+# then: ros2 topic list / ros2 topic hz /fmu/out/vehicle_odometry (~10-15 Hz)
+
+make shell-px4        # bash inside px4-sim (flight-controller side)
+# PX4 internals are queryable via the px4-* client binaries, e.g.:
+# cd /PX4-Autopilot/build/px4_sitl_default/rootfs && \
+#   /PX4-Autopilot/build/px4_sitl_default/bin/px4-listener vehicle_status
+```
+
+### Stopping / restarting
+
 ```bash
 make stop
 ```
+
+**Always restart the whole stack together** (`make stop && make sim`).
+Restarting only the px4-sim container leaves the DDS bridge wedged — see §5,
+issue 5.
+
+### No upstream repos are forked or modified
+
+Everything external — PX4-Autopilot, px4_msgs, px4_ros_com,
+Micro-XRCE-DDS-Agent — is cloned **read-only at pinned versions from the
+official public repos during `docker build`**. All customization lives as
+small overlay files inside *this* repo (e.g.
+`docker/px4_sitl_overrides/4002_gz_x500_depth.post`, copied into the image
+at build time). Nothing to fork, nothing to patch by hand, no upstream
+maintenance burden: to replicate the system anywhere, this repo + Docker is
+the complete recipe.
 
 ---
 
 ## 5. Known Issues Hit During Bring-Up (already fixed in this repo)
 
 Documenting these so a future rebuild-from-scratch doesn't waste time
-rediscovering them — both are already fixed in the Dockerfiles in this repo.
+rediscovering them — all are already fixed in this repo.
 
 **1. `DONT_RUN=1` does not stop the new Gazebo target from launching.**
 PX4's `DONT_RUN` environment variable is only checked by the old Gazebo
@@ -175,19 +217,102 @@ config had already been stripped from the image, leaving only the alpha
 `.deb` installed. Always check `apt-cache policy px4-gazebo` (or equivalent)
 before trusting a prebuilt image's version claim.
 
+**4. PX4 refuses to arm the `x500_depth` SITL model out of the box.** Two
+separate prearm checks fail forever with a bare
+`WARN [commander] Arming denied: Resolve system health failures first`:
+- The x500_depth Gazebo model has no battery/power simulation, so
+  `battery_status` never publishes and the battery + power checks never pass.
+- The x500 airframe config sets `NAV_DLL_ACT 2` (datalink-loss failsafe),
+  and PX4's `rcAndDataLinkCheck` makes a ground-station connection
+  **mandatory for arming** whenever that param is > 0 — but this stack flies
+  offboard with no QGroundControl attached.
+
+Fixed via `docker/px4_sitl_overrides/4002_gz_x500_depth.post`, which PX4
+sources automatically after the airframe config (its own supported override
+hook): `CBRK_SUPPLY_CHK 894281` (PX4's documented circuit breaker for
+missing power telemetry) and `NAV_DLL_ACT 0` (PX4's code default). Both are
+**SITL-only** — the file only exists inside the sim image and is keyed to a
+simulation-only airframe ID, so it can never leak onto the real Pixhawk.
+Debugging tip that cracked this: `px4-listener health_report` exposes
+`arming_check_error_flags` as a bitmask, decodable against
+`health_component_t` in `build/px4_sitl_default/events/common_with_enums.json`.
+Note the `.post` file must also be copied into the already-compiled
+`build/px4_sitl_default/etc/` tree if PX4 was compiled earlier in the same
+Dockerfile — the build step snapshots ROMFS at compile time.
+
+**5. Restarting only the px4-sim container wedges the DDS bridge.** If
+px4-sim is recreated while ros2-autonomy (and its Micro-XRCE-DDS-Agent) keeps
+running, the session "re-establishes" in the agent log and datawriters get
+recreated — but no data flows, and `px4-uxrce_dds_client status` inside PX4
+reports "Running, disconnected" with timesync never converging. Restarting
+the agent process alone did not recover it either. **Workaround: always
+restart the full stack together** (`make stop && make sim`).
+
+**6. PX4 v1.17 publishes versioned topic names.** Messages that carry a
+`MESSAGE_VERSION` field (e.g. `VehicleStatus`, `VehicleLocalPosition`) appear
+on the wire as `/fmu/out/vehicle_status_v1`, `/fmu/out/vehicle_local_position_v1`
+— not the unversioned names used in most PX4 examples and docs. Subscribing
+to the unversioned name silently receives nothing. `common_control` already
+uses the `_v1` names.
+
+**7. The offboard signal = heartbeat + setpoint stream, and commands need
+retries.** PX4 only treats the offboard link as "present" when both the
+`OffboardControlMode` heartbeat *and* an actual `TrajectorySetpoint` stream
+are flowing — a node that waits to publish setpoints until after arming will
+never be allowed to arm. Additionally, the first offboard-mode/arm command
+right after boot is often rejected while preflight checks settle.
+`offboard_control_node` therefore streams the takeoff setpoint from tick 0
+(harmless while disarmed on the ground) and retries mode-switch + arm once
+per second until `vehicle_status` confirms — never fire-and-forget.
+
+**8. Arming is rejected for the first ~30–60 s after `make sim` — this is
+normal.** PX4's EKF2 estimator needs time to converge after boot; until then
+the log shows `Preflight Fail: ekf2 missing data` and
+`pre_flight_checks_pass: false`. Do not debug this — just wait.
+`make flight-test` handles it automatically (the node retries once per
+second until PX4 accepts). To watch convergence yourself:
+`make shell` → `ros2 topic echo /fmu/out/vehicle_status_v1 --once` and wait
+for `pre_flight_checks_pass: true`.
+
+**9. On a weak/older CPU the simulation runs slower than wall-clock.** PX4
+SITL runs in lockstep with Gazebo: when the CPU can't keep up, simulated
+time simply advances slower than real time — on this project's dev laptop
+the 2 m climb takes ~70 s of wall time. Nothing is hung; the flight is
+proceeding correctly in sim-time. Judge progress by the node's state
+transitions (climbing → hovering → landing), never by a stopwatch, and be
+generous with any `timeout` you wrap around the test.
+
+**10. If the first `make build` dies mid-way (network hiccup), just rerun
+it.** The px4-sim image clones PX4 + all submodules and downloads Gazebo
+Harmonic packages — several GB total. Docker caches each completed layer,
+so a rerun resumes from the last finished step instead of starting over.
+
+**11. Both containers use host networking — check for conflicts on shared
+machines.** The Micro-XRCE-DDS-Agent binds UDP `8888` on the host; PX4's
+MAVLink uses `14550`/`14540`. If another process holds those ports, the
+bridge silently fails. Likewise, ROS 2 traffic uses the default
+`ROS_DOMAIN_ID=0` — if other ROS 2 systems run on the same host/LAN, their
+topics will cross-talk; set a unique `ROS_DOMAIN_ID` for this stack (add it
+to the `environment:` of `ros2-autonomy` in `docker-compose.yml`) if that
+applies to you.
+
 ---
 
 ## 6. Repository Layout
 
 ```
 docker/
-  Dockerfile.px4_sim         PX4 v1.17.0 SITL + Gazebo Harmonic (headless)
-  Dockerfile.ros2_autonomy   ROS 2 Humble + uXRCE-DDS agent + px4_msgs/px4_ros_com
-docker-compose.yml           sim profile: px4-sim + ros2-autonomy (host networking)
-.env                         Version pins (PX4, px4_msgs/px4_ros_com branches, Gazebo model)
-Makefile                     build / sim / stop / shell / logs / ps
-ros2_ws/src/                 common_control, common_missions, common_perception,
-                              sim_bringup, hw_bringup — not yet populated (Phase 1+)
+  Dockerfile.px4_sim              PX4 v1.17.0 SITL + Gazebo Harmonic (headless)
+  Dockerfile.ros2_autonomy        ROS 2 Humble + uXRCE-DDS agent + px4_msgs/px4_ros_com
+  entrypoint_ros2_autonomy.sh     Auto-starts the Micro-XRCE-DDS-Agent at container boot
+  px4_sitl_overrides/             SITL-only PX4 param overrides (see §5, issue 4)
+docker-compose.yml                sim profile: px4-sim + ros2-autonomy (host networking)
+.env                              Version pins (PX4, px4_msgs/px4_ros_com, Gazebo model)
+Makefile                          build / sim / flight-test / stop / shell / logs / ps
+ros2_ws/src/
+  common_control/                 OffboardControlNode — heartbeat/arm/offboard/
+                                   takeoff/hover/land state machine (Phase 1 ✓)
+  (common_missions, common_perception, sim_bringup, hw_bringup — future phases)
 ```
 
 ---
@@ -198,6 +323,7 @@ ros2_ws/src/                 common_control, common_missions, common_perception,
 |---|---|
 | `make build` | Build `px4-sim` + `ros2-autonomy` images |
 | `make sim` | Start PX4 SITL (Gazebo Harmonic, headless) + the ROS 2 bridge container |
+| `make flight-test` | Build `common_control` in-container and fly takeoff → hover → land |
 | `make shell` | Bash inside `ros2-autonomy` |
 | `make shell-px4` | Bash inside `px4-sim` |
 | `make logs` | Tail logs from both containers |
@@ -210,11 +336,21 @@ ros2_ws/src/                 common_control, common_missions, common_perception,
 
 ## 8. Roadmap
 
-This repo is under active development. Phase 0 (PX4 SITL + Gazebo Harmonic +
-ROS 2 bridge, everything above) is complete and verified. Still to come, in
-order: an offboard hover control node, pluggable mission scripts, GPS-denied
-VIO in simulation, then the same code running on the Orange Pi 5 Plus +
-Pixhawk 6 + RealSense D435i, and finally SLAM/Nav2. Full phase-by-phase
-detail lives in `IMPLEMENTATION_PLAN.md` (local, gitignored, not pushed —
-it's an internal working document that changes too fast to keep in sync with
-the public repo).
+This repo is under active development.
+
+- **Phase 0 — complete**: PX4 SITL + Gazebo Harmonic boots headless; the
+  uXRCE-DDS bridge exposes the full `/fmu/*` topic set to ROS 2.
+- **Phase 1 — complete**: `common_control/offboard_control_node` flies the
+  full cycle in sim — arm → offboard → takeoff → hover → land → disarm
+  (`make flight-test`).
+- **Phase 2 — next**: pluggable missions (`common_missions`: square, survey,
+  … selected by name) on top of the Phase 1 control primitives.
+- **Phase 3**: GPS-denied flight in sim — OpenVINS VIO fed by the simulated
+  depth camera, fused into PX4 EKF2 with GPS disabled.
+- **Phase 4**: same code on real hardware — Orange Pi 5 Plus + Pixhawk 6 +
+  RealSense D435i.
+- **Phase 5**: SLAM + Nav2 navigation.
+
+Full phase-by-phase detail lives in `IMPLEMENTATION_PLAN.md` (local,
+gitignored, not pushed — an internal working document that changes too fast
+to keep in sync with the public repo).

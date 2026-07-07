@@ -54,5 +54,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
     && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc
 
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+COPY docker/entrypoint_ros2_autonomy.sh /usr/local/bin/entrypoint_ros2_autonomy.sh
+RUN chmod +x /usr/local/bin/entrypoint_ros2_autonomy.sh
+
 WORKDIR /ros2_ws
+ENTRYPOINT ["/usr/local/bin/entrypoint_ros2_autonomy.sh"]
 CMD ["tail", "-f", "/dev/null"]
