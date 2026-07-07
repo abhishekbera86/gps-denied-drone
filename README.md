@@ -30,18 +30,6 @@ machine. All of it lives in containers.
 - A clean extension point for **SLAM and Nav2** once basic flight and VIO are
   solid (not yet built — see Roadmap below)
 
-### Why this architecture, not a mission framework like Aerostack2 or MAVSDK
-
-An earlier version of this repo was built on Aerostack2. It worked, but its
-layered platform/controller/behavior state machine has hidden,
-idempotency-guarded service semantics that are expensive to debug blind (a
-concrete example: calling its `offboard()` service a second time after it's
-already active silently returns failure instead of a no-op success). This
-version talks to PX4 directly over ROS 2 — every behavior (arm, takeoff,
-offboard, land) is code in this repo that you can read end to end, and it
-plugs into Nav2 later with no bridge node, since everything is already plain
-ROS 2 topics.
-
 ---
 
 ## 2. Architecture
