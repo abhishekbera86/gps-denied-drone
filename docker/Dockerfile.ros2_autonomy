@@ -1,0 +1,58 @@
+# =============================================================================
+# Dockerfile.ros2_autonomy — ROS 2 Humble + PX4 uXRCE-DDS bridge
+# =============================================================================
+# Shared image for BOTH sim and hw profiles. Contains:
+#   - Micro-XRCE-DDS-Agent (bridges PX4's DDS client to ROS 2 topics)
+#   - px4_msgs + px4_ros_com, built against PX4 v1.17.0 message definitions
+# The common_control / common_missions / common_perception packages are
+# bind-mounted from ./ros2_ws/src at runtime (not baked in) and colcon-built
+# on top of this underlay workspace — same pattern as the old repo's
+# colcon_build_cache volume, which worked well.
+# =============================================================================
+
+FROM ros:humble-ros-base
+
+ARG PX4_MSGS_BRANCH=release/1.17
+ARG PX4_ROS_COM_BRANCH=release/1.16
+ARG MICRO_XRCE_DDS_AGENT_VERSION=v3.0.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential \
+        python3-colcon-common-extensions python3-pip \
+        libasio-dev libtinyxml2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Micro-XRCE-DDS-Agent (eProsima) ───────────────────────────────────────
+# Standard build from source, per PX4's own ROS 2 user guide.
+WORKDIR /opt
+RUN git clone --branch ${MICRO_XRCE_DDS_AGENT_VERSION} --depth 1 \
+        https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
+    && cd Micro-XRCE-DDS-Agent \
+    && mkdir build && cd build \
+    && cmake .. \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig /usr/local/lib/
+
+# ── PX4 ROS 2 underlay workspace: px4_msgs + px4_ros_com ──────────────────
+WORKDIR /opt/px4_ros2_ws/src
+RUN git clone --branch ${PX4_MSGS_BRANCH} --depth 1 \
+        https://github.com/PX4/px4_msgs.git \
+    && git clone --branch ${PX4_ROS_COM_BRANCH} --depth 1 \
+        https://github.com/PX4/px4_ros_com.git
+
+WORKDIR /opt/px4_ros2_ws
+RUN . /opt/ros/humble/setup.sh \
+    && colcon build --packages-select px4_msgs px4_ros_com
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
+    && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc
+
+WORKDIR /ros2_ws
+CMD ["tail", "-f", "/dev/null"]

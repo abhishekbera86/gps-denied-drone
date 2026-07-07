@@ -1,0 +1,50 @@
+# =============================================================================
+# Dockerfile.px4_sim — PX4 v1.17.0 SITL + Gazebo Harmonic (headless, CPU-only)
+# =============================================================================
+# Phase 0 image: boots PX4 SITL against the x500_depth vehicle model in
+# Gazebo Harmonic with no GUI/GPU. PX4's own ROMFS init script auto-starts
+# `uxrce_dds_client`, which connects out to a Micro-XRCE-DDS-Agent listening
+# on UXRCE_DDS_PORT (run by the ros2-autonomy container, host networking).
+# =============================================================================
+
+FROM ubuntu:22.04
+
+LABEL org.opencontainers.image.title="quad/px4-sim" \
+      org.opencontainers.image.description="PX4 v1.17.0 SITL + Gazebo Harmonic (headless)"
+
+ARG PX4_VERSION=v1.17.0
+ARG PX4_GZ_MODEL=x500_depth
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/root \
+    PX4_GZ_MODEL=${PX4_GZ_MODEL}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        sudo git wget curl ca-certificates lsb-release gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /PX4-Autopilot
+RUN git clone --branch ${PX4_VERSION} --depth 1 \
+        https://github.com/PX4/PX4-Autopilot.git . \
+    && git submodule update --init --recursive --depth 1
+
+# Installs Gazebo Harmonic + all SITL build deps (skips the NuttX embedded
+# toolchain — not needed to build/run the simulator).
+RUN Tools/setup/ubuntu.sh --no-nuttx
+
+# Pre-compile the default SITL config (includes the gz_bridge module) so
+# container start is fast. NOTE: unlike Gazebo Classic, the new Gazebo
+# integration's "gz_<model>" targets always launch the sim as part of the
+# make invocation — DONT_RUN is not honored there. Building the bare
+# px4_sitl_default config target compiles everything (including gz_bridge)
+# without ever invoking the run step, matching how PX4's own CI does a
+# build-only pass (see Makefile's check_px4_sitl_default / coverity_scan).
+RUN make px4_sitl_default
+
+ENV PX4_HEADLESS=1 \
+    PX4_SIM_SPEED_FACTOR=1.0
+
+EXPOSE 8888/udp 14550/udp 14540/udp
+
+WORKDIR /PX4-Autopilot
+CMD ["bash", "-c", "HEADLESS=1 make px4_sitl gz_${PX4_GZ_MODEL}"]

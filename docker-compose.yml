@@ -1,97 +1,64 @@
 # =============================================================================
-# docker-compose.yml — GPS-Denied Autonomous Drone Stack
+# docker-compose.yml — GPS-Denied Autonomous Drone Stack (v3 — PX4-native ROS 2)
 # =============================================================================
 #
-# ARCHITECTURE (corrected):
+# ARCHITECTURE — Phase 0/1 (sim only; hw profile added in Phase 4):
 #
-#   SIM profile  → ONE container (aerostack2/nightly-humble base)
-#                  Uses as2_platform_multirotor_simulator (built-in physics)
-#                  No PX4, no Gazebo, no GPU required.
+#   px4-sim         PX4 v1.17.0 SITL + Gazebo Harmonic (headless, x500_depth)
+#   ros2-autonomy   ROS 2 Humble + px4_msgs/px4_ros_com + common_* packages
+#                   Runs the Micro-XRCE-DDS-Agent bridging PX4 <-> ROS 2 topics.
 #
-#   HW profile   → ONE container (same base + as2_platform_pixhawk)
-#                  Connects to real Pixhawk via serial UART
-#                  Runs on Orange Pi 5
-#
-# Profiles:
-#   sim  → simulation using AS2 multirotor simulator
-#   hw   → real hardware (Orange Pi 5 + Pixhawk + RealSense)
+# Both containers use host networking so the DDS agent (udp 127.0.0.1:8888,
+# matching PX4's default uxrce_dds_client target) is reachable across
+# containers with zero explicit port mapping.
 #
 # Usage:
-#   make sim      (preferred — builds + starts + launches)
-#   make hw       (on Orange Pi 5)
+#   make build   (first time only)
+#   make sim     (starts px4-sim + ros2-autonomy)
+#   make stop
 # =============================================================================
 
 volumes:
   colcon_build_cache:
     name: quad_colcon_build_cache
-    # Persists colcon build output inside the container across restarts.
-    # Avoids rebuilding quad_core/quad_sim on every container restart.
+    # Persists colcon build output for common_* packages across restarts.
 
 services:
 
-  # ── Aerostack2 Simulation Container ──────────────────────────────────────
-  # Uses AS2's built-in multirotor simulator — no PX4, no Gazebo needed.
-  #
-  # What runs inside:
-  #   - as2_platform_multirotor_simulator (physics engine)
-  #   - as2_state_estimator (ground_truth plugin)
-  #   - as2_motion_controller (differential flatness)
-  #   - as2_behaviors_motion (Takeoff, Land, GoTo)
-  #   - mission.py (via: make mission)
-  #
-  # All launched by:  ros2 launch quad_sim sim.launch.py
-  aerostack2:
+  # ── PX4 SITL + Gazebo Harmonic ────────────────────────────────────────────
+  px4-sim:
     build:
       context: .
-      dockerfile: docker/Dockerfile.as2
-    image: quad/aerostack2:humble
-    container_name: aerostack2
+      dockerfile: docker/Dockerfile.px4_sim
+      args:
+        PX4_VERSION: "${PX4_VERSION:-v1.17.0}"
+        PX4_GZ_MODEL: "${PX4_GZ_MODEL:-x500_depth}"
+    image: quad/px4-sim:v1.17.0
+    container_name: px4-sim
     network_mode: host
     environment:
-      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      DRONE_NAMESPACE: "drone0"
-      DISPLAY: ""
-      QT_QPA_PLATFORM: offscreen
-    volumes:
-      # Source code mounted read-only — edit on host, runs in container
-      - ./ros2_ws:/ros2_ws:ro
-      - ./config:/config:ro
-      - ./scripts:/scripts:ro
-      # Colcon build cache (persists between restarts — avoids rebuilds)
-      - colcon_build_cache:/ros2_ws_build
-    command: tail -f /dev/null
-    restart: "no"
+      PX4_HEADLESS: "1"
     profiles: [sim]
 
-  # ── Hardware Stack — Orange Pi 5 (ARM64) ──────────────────────────────────
-  # Run ONLY on the Orange Pi 5 companion computer.
-  #
-  # What runs inside:
-  #   - RealSense D435i camera driver
-  #   - MicroXRCE-DDS Agent (serial → Pixhawk)
-  #   - as2_platform_pixhawk (serial UART to Pixhawk)
-  #   - as2_state_estimator (raw_odometry plugin — ingests OpenVINS)
-  #   - as2_motion_controller
-  #   - as2_behaviors_motion
-  hw_stack:
+  # ── ROS 2 Humble + PX4 uXRCE-DDS bridge ───────────────────────────────────
+  ros2-autonomy:
     build:
       context: .
-      dockerfile: docker/Dockerfile.hw
-    image: quad/hw-stack:arm64
-    container_name: hw_stack
+      dockerfile: docker/Dockerfile.ros2_autonomy
+      args:
+        PX4_MSGS_BRANCH: "${PX4_MSGS_BRANCH:-release/1.17}"
+        PX4_ROS_COM_BRANCH: "${PX4_ROS_COM_BRANCH:-release/1.16}"
+    image: quad/ros2-autonomy:humble
+    container_name: ros2-autonomy
     network_mode: host
-    privileged: true           # Required: USB camera + UART serial access
     environment:
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-      DRONE_NAMESPACE: "drone0"
-      DISPLAY: ""
-      PIXHAWK_SERIAL_PORT: "${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}"
-      PIXHAWK_BAUD_RATE: "${PIXHAWK_BAUD_RATE:-921600}"
+      UXRCE_DDS_PORT: "${UXRCE_DDS_PORT:-8888}"
+      DRONE_NAMESPACE: "${DRONE_NAMESPACE:-drone1}"
     volumes:
-      - /dev:/dev              # Full device access: USB camera + UART
-      - ./ros2_ws:/ros2_ws:ro
-      - ./config:/config:ro
-      - ./scripts:/scripts:ro
+      - ./ros2_ws:/ros2_ws:rw
+      - colcon_build_cache:/ros2_ws_build
+    depends_on:
+      - px4-sim
     command: tail -f /dev/null
-    restart: "no"
-    profiles: [hw]
+    profiles: [sim]

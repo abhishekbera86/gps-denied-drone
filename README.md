@@ -1,345 +1,232 @@
 # GPS-Denied Autonomous Drone Stack
 
-> PX4 v1.14.3 · ROS 2 Humble · Aerostack2 · OpenVINS VIO · Fully Containerised
+> PX4 v1.17.0 · Gazebo Harmonic · ROS 2 Humble · Fully Containerized
 
-This repository contains a professional-grade, containerised autonomous drone stack built on the **Aerostack2 (AS2)** framework. It enables a quadcopter to fly **without GPS** in both simulation and physical real-world environments using Visual-Inertial Odometry (VIO) from an Intel RealSense D435i depth camera processed by OpenVINS.
+A GPS-denied autonomous quadcopter stack built directly on **PX4's native ROS 2
+integration** (the uXRCE-DDS bridge + `px4_msgs`/`px4_ros_com` — no MAVSDK, no
+third-party mission framework). The goal is a quadcopter that flies without
+GPS using Visual-Inertial Odometry from an Intel RealSense D435i, with the
+exact same autonomy code running in Gazebo simulation and on a real Orange Pi
+5 Plus + Pixhawk 6 companion-computer setup.
 
-The key design pattern is **Sim-to-Real parity**: the exact same high-level Python mission logic runs in simulation and on real companion computer hardware (Orange Pi 5 + Pixhawk flight controller).
+Everything runs inside Docker. **Nothing is installed on the host machine or
+on the Orange Pi 5 Plus** — no ROS 2, no PX4 toolchain, no Gazebo, on either
+machine. All of it lives in containers.
 
 ---
 
-## 1. Prerequisites & Environment Setup
+## 1. Objective
 
-This stack runs completely inside Docker to avoid any host dependency contamination, library compilation, or system-level setup.
+- **GPS-denied flight** using VIO from an Intel RealSense D435i
+- **PX4 v1.17.0** flight stack, talking to ROS 2 over PX4's own uXRCE-DDS
+  bridge — plain ROS 2 topics end to end, no MAVLink translation hop
+- **ROS 2 Humble** throughout
+- **Gazebo Harmonic** simulation, headless (no GPU required — this stack is
+  developed on a GPU-less ThinkPad running Ubuntu 22.04)
+- **Modular, pluggable missions** — adding a new flight pattern means adding
+  one file, not editing a monolithic script
+- **One autonomy codebase, two targets**: sim (Gazebo, dev host) and real
+  hardware (Orange Pi 5 Plus + Pixhawk 6) run identical mission/control code
+- A clean extension point for **SLAM and Nav2** once basic flight and VIO are
+  solid (not yet built — see Roadmap below)
 
-### Host Machine Requirements
-* **Operating System**: Ubuntu 22.04 LTS (or any Linux distribution running Docker).
-* **Architecture**: x86_64 for Development/Simulation; ARM64 (e.g., Orange Pi 5) for Real Flight hardware.
-* **Hardware**: Dual-core/Quad-core CPU with at least 8 GB RAM.
-* **Graphics**: **No GPU/graphics acceleration is required** for simulation. The stack runs completely headless.
+### Why this architecture, not a mission framework like Aerostack2 or MAVSDK
 
-### Host Package Installation
-To install Docker Engine and Docker Compose, run the following commands on your host:
+An earlier version of this repo was built on Aerostack2. It worked, but its
+layered platform/controller/behavior state machine has hidden,
+idempotency-guarded service semantics that are expensive to debug blind (a
+concrete example: calling its `offboard()` service a second time after it's
+already active silently returns failure instead of a no-op success). This
+version talks to PX4 directly over ROS 2 — every behavior (arm, takeoff,
+offboard, land) is code in this repo that you can read end to end, and it
+plugs into Nav2 later with no bridge node, since everything is already plain
+ROS 2 topics.
 
+---
+
+## 2. Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                     common_autonomy (ROS 2 workspace)                │
+│           SHARED — identical source, sim and real hardware          │
+│  common_control/  common_missions/  common_perception/               │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                 │  identical ROS 2 topics
+                                 │  (/fmu/in/*, /fmu/out/*, /vio/odometry…)
+                 ┌───────────────┴────────────────┐
+        ┌────────▼─────────┐            ┌─────────▼──────────┐
+        │   sim_bringup     │            │    hw_bringup       │
+        │  dev host, x86_64 │            │  Orange Pi 5+, ARM64│
+        │  no GPU needed    │            │                     │
+        │                   │            │  Not built yet —    │
+        │  px4-sim:         │            │  see Roadmap        │
+        │   PX4 v1.17.0 SITL│            │                     │
+        │   + Gazebo Harmonic│           │                     │
+        │   headless        │            │                     │
+        │                   │            │                     │
+        │  ros2-autonomy:   │            │                     │
+        │   ROS 2 Humble +  │            │                     │
+        │   uXRCE-DDS agent │            │                     │
+        └───────────────────┘            └─────────────────────┘
+```
+
+**Rule:** all flight/mission logic lives in `common_autonomy` (under
+`ros2_ws/src/`). Sim/hw bringup packages only contain launch files and
+world/connection config. The only difference between sim and real is the
+uXRCE-DDS transport endpoint (UDP vs serial) — never the mission code.
+
+For the full phase-by-phase design (why each version pin was chosen, what
+each future phase covers), see `IMPLEMENTATION_PLAN.md` in this repo — it's a
+local working document (gitignored, not pushed) since it changes fast during
+active development.
+
+---
+
+## 3. Prerequisites
+
+### Host machine
+- **OS**: Ubuntu 22.04 LTS or any Linux distribution running Docker
+- **Architecture**: x86_64 for development/simulation; ARM64 (Orange Pi 5
+  Plus) for real flight hardware
+- **Graphics**: none required — Gazebo Harmonic runs fully headless
+- **RAM**: 8 GB+ recommended (PX4 SITL compiles ~1140 objects on first build)
+
+### Install Docker
 ```bash
-# 1. Download and run the official Docker installation script
 curl -fsSL https://get.docker.com | bash
-
-# 2. Add your current user to the docker group so you don't need sudo for every command
 sudo usermod -aG docker $USER
-
-# 3. Apply the group changes to the current terminal session
 newgrp docker
-
-# 4. Verify Docker and Docker Compose are installed correctly
 docker --version
 docker compose version
 ```
 
+No other host packages are required — not even `git` for PX4 or ROS 2; all
+of that lives inside the build containers.
+
 ---
 
-## 2. Quick Start: Simulation Flight
-
-### Step 1 — Clone the Repository and Navigate to the Workspace
-Clone this repository to your development directory:
+## 4. Quick Start
 
 ```bash
 git clone https://github.com/abhishekbera86/gps-denied-drone.git
 cd gps-denied-drone
+make build      # first time only — compiles PX4 SITL + the ROS 2 bridge image
+make sim        # starts px4-sim + ros2-autonomy
 ```
 
-### Step 2 — Build the Docker Image
-Build the custom Aerostack2 image, which installs extra dependencies (such as Cyclone DDS and MAVLink helper modules) on top of the pre-built base image. This step takes 2–3 minutes:
+`make build` compiles two images:
+- `px4-sim` — clones PX4 v1.17.0, installs Gazebo Harmonic via PX4's own
+  `Tools/setup/ubuntu.sh`, and pre-compiles the `px4_sitl_default` SITL
+  target (~2–3 minutes on a modern 4-core CPU once Gazebo/toolchain
+  packages are cached; longer on the very first run).
+- `ros2-autonomy` — ROS 2 Humble + the Micro-XRCE-DDS-Agent (built from
+  source) + `px4_msgs`/`px4_ros_com` (colcon-built against PX4 v1.17.0
+  message definitions).
+
+`make sim` starts both containers. Check that PX4 booted cleanly:
+```bash
+make logs
+```
+You should see Gazebo Harmonic spawn the `x500_depth_0` model and PX4's
+`uxrce_dds_client` connect to `127.0.0.1:8888`.
+
+### Bridging PX4 to ROS 2
+
+The Micro-XRCE-DDS-Agent isn't auto-started yet (Phase 1 will wire this into
+a proper launch file). For now, start it manually and verify the bridge:
 
 ```bash
-make build
+docker exec -d ros2-autonomy bash -c "MicroXRCEAgent udp4 -p 8888"
+
+docker exec -it ros2-autonomy bash
+source /opt/ros/humble/setup.bash
+source /opt/px4_ros2_ws/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 topic list          # should show /fmu/in/* and /fmu/out/* topics
+ros2 topic hz /fmu/out/vehicle_odometry   # should report ~10-15 Hz
 ```
 
-### Step 3 — Launch the Simulation World
-Launch the simulation containers and the Aerostack2 node stack:
-
-```bash
-make sim
-```
-
-#### Under the Hood of `make sim`:
-1. Starts the `aerostack2` container in host networking mode.
-2. Triggers `scripts/launch_sim.sh` inside the container.
-3. Automatically runs `colcon build` inside the container to register the `quad_core` and `quad_sim` ROS 2 packages.
-4. Calls `ros2 launch quad_sim sim.launch.py` to spin up the autonomy nodes:
-   * **`as2_platform_multirotor_simulator`**: The built-in simulator node simulating drone physics.
-   * **`as2_state_estimator`**: Ingests ground truth simulation state.
-   * **`as2_motion_controller`**: Receives control setpoints and generates flight actuator inputs.
-   * **`as2_behaviors_motion`**: High-level action servers (Takeoff, Land, GoTo).
-5. **Keeps the terminal open** to output live logs from all running nodes.
-
-*Leave this terminal running and open a **new terminal session**.*
-
-### Step 4 — Open the Simulation Viewer (Optional but Recommended)
-To visualize the state, position, velocity, and orientation of the drone in real-time inside your terminal, run:
-
-```bash
-make view
-```
-
-This launches the **Aerostack2 Alphanumeric Viewer**, a dashboard that prints real-time coordinates and control states without needing a GPU or graphical window.
-
-### Step 5 — Run the Autonomous Mission
-In another terminal session, execute the pre-built mission:
-
-```bash
-# Ensure you are in the cloned repository directory
-cd gps-denied-drone
-
-# Launch the Python-based autonomous mission script
-make mission
-```
-
-#### Expected Simulation Behavior:
-1. The script connects to the drone interface (`drone0`).
-2. Drone **arms** and switches to **Offboard mode**.
-3. **Takes off** to 2.0 metres.
-4. Flies a **4-point square pattern** (4.0m x 4.0m) maintaining a height of 2.0m.
-5. Returns to the takeoff origin (0, 0).
-6. **Lands** safely and **disarms**.
-
-### Step 6 — Stop and Clean Up
-To stop the simulation nodes and clean up the container resources, run:
-
+### Stopping everything
 ```bash
 make stop
 ```
 
 ---
 
-## 3. ROS 2 Nodes & Topics Architecture
+## 5. Known Issues Hit During Bring-Up (already fixed in this repo)
 
-Once the simulation stack is running (`make sim`), you can query ROS 2 nodes and topics by opening a shell in the container:
+Documenting these so a future rebuild-from-scratch doesn't waste time
+rediscovering them — both are already fixed in the Dockerfiles in this repo.
 
-```bash
-make shell
+**1. `DONT_RUN=1` does not stop the new Gazebo target from launching.**
+PX4's `DONT_RUN` environment variable is only checked by the old Gazebo
+Classic and jMAVSim `sitl_run.sh` scripts. The new Gazebo integration's
+`gz_<model>` make targets (e.g. `gz_x500_depth`) always launch the
+simulation as part of the build invocation — so
+`DONT_RUN=1 make px4_sitl gz_x500_depth` inside a `docker build` step hangs
+forever (Gazebo + PX4 just sit there running). Fixed in
+`docker/Dockerfile.px4_sim` by pre-compiling with `make px4_sitl_default`
+instead — the same compile-only target PX4's own CI uses
+(`check_px4_sitl_default`, `coverity_scan`) — which builds everything
+including the `gz_bridge` module without ever invoking a run step.
+
+**2. `ros:humble-ros-base` doesn't ship `rmw_cyclonedds_cpp`.**
+Setting `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` without installing the
+matching package fails with `librmw_cyclonedds_cpp.so: cannot open shared
+object file`. Fixed in `docker/Dockerfile.ros2_autonomy` by explicitly
+installing `ros-humble-rmw-cyclonedds-cpp` (appended as its own `RUN` layer
+*after* the expensive `colcon build` of `px4_msgs`/`px4_ros_com`, so editing
+it doesn't invalidate that ~10-minute build cache).
+
+**3. Don't use `px4io/px4-sitl-gazebo` or similar prebuilt PX4+Gazebo images
+without checking their pinned PX4 version first.** One such image already
+cached on this project's dev machine turned out to ship PX4 v1.18.0-alpha1
+(an unreleased alpha) with no path back to a stable version — its apt repo
+config had already been stripped from the image, leaving only the alpha
+`.deb` installed. Always check `apt-cache policy px4-gazebo` (or equivalent)
+before trusting a prebuilt image's version claim.
+
+---
+
+## 6. Repository Layout
+
+```
+docker/
+  Dockerfile.px4_sim         PX4 v1.17.0 SITL + Gazebo Harmonic (headless)
+  Dockerfile.ros2_autonomy   ROS 2 Humble + uXRCE-DDS agent + px4_msgs/px4_ros_com
+docker-compose.yml           sim profile: px4-sim + ros2-autonomy (host networking)
+.env                         Version pins (PX4, px4_msgs/px4_ros_com branches, Gazebo model)
+Makefile                     build / sim / stop / shell / logs / ps
+ros2_ws/src/                 common_control, common_missions, common_perception,
+                              sim_bringup, hw_bringup — not yet populated (Phase 1+)
 ```
 
-Inside the container shell, run standard ROS 2 commands:
+---
 
-### Running Nodes
-* **`/drone0/platform`**: Node managing simulation dynamics or serial MAVLink connection to the Pixhawk.
-* **`/drone0/state_estimator`**: Feeds current state estimation to the controller.
-* **`/drone0/motion_controller`**: Implements differential flatness algorithms to translate high-level trajectories to platform attitude/thrust setpoints.
-* **`/drone0/behaviors/`**: Action servers managing discrete movements (e.g., `/drone0/behaviors/takeoff`, `/drone0/behaviors/land`, `/drone0/behaviors/go_to`).
+## 7. Command Reference
 
-### Key ROS 2 Topics
-* **`/drone0/self_localization/pose`** [`geometry_msgs/msg/PoseStamped`]: Current estimated position (ENU coordinates).
-* **`/drone0/self_localization/twist`** [`geometry_msgs/msg/TwistStamped`]: Current estimated linear and angular velocities.
-* **`/drone0/actuator_command/twist`** [`geometry_msgs/msg/TwistStamped`]: Output velocity command from the controller.
-* **`/drone0/sensor_measurements/imu`** [`sensor_msgs/msg/Imu`]: IMU measurements coming from the simulation or the D435i camera.
-* **`/openvins/odometry`** [`nav_msgs/msg/Odometry`]: Output odometry from OpenVINS VIO (in VIO/hardware mode).
-
-To echo a topic in real-time inside the container:
-```bash
-ros2 topic echo /drone0/self_localization/pose
-```
+| Command | Action |
+|---|---|
+| `make build` | Build `px4-sim` + `ros2-autonomy` images |
+| `make sim` | Start PX4 SITL (Gazebo Harmonic, headless) + the ROS 2 bridge container |
+| `make shell` | Bash inside `ros2-autonomy` |
+| `make shell-px4` | Bash inside `px4-sim` |
+| `make logs` | Tail logs from both containers |
+| `make ps` | Show container status |
+| `make stop` | Stop and remove both containers |
+| `make clean` | Remove locally built images |
+| `make clean-all` | Remove images **and** the colcon build cache volume |
 
 ---
 
-## 4. Writing & Running Custom Missions
+## 8. Roadmap
 
-Autonomous missions are written using the **Aerostack2 Python API**. All autonomy logic lives inside `ros2_ws/src/quad_core/mission.py`. 
-
-### Python API Structure
-Here is a simplified blueprint of how to build a custom flight script:
-
-```python
-import rclpy
-import sys
-from as2_python_api.drone_interface import DroneInterface
-
-def main():
-    rclpy.init()
-
-    # 1. Initialize drone interface matching the namespace (e.g., drone0)
-    drone = DroneInterface(drone_id="drone0", verbose=False)
-
-    try:
-        # 2. Arm and switch to Offboard
-        print("Arming...")
-        if drone.arm():
-            
-            # 3. Takeoff behavior
-            print("Taking off...")
-            drone.takeoff(height=1.5, speed=0.5)
-            
-            # 4. GoTo waypoint behavior
-            print("Moving to waypoint...")
-            drone.go_to.go_to_point_with_yaw(x=2.0, y=0.0, z=1.5, angle=0.0, speed=0.5)
-            
-            # 5. Land behavior
-            print("Landing...")
-            drone.land(speed=0.4)
-            
-            # 6. Disarm
-            drone.disarm()
-            
-    except KeyboardInterrupt:
-        print("Interrupted! Attempting emergency landing...")
-        drone.land(speed=0.4)
-    finally:
-        drone.shutdown()
-        rclpy.shutdown()
-
-if __name__ == "__main__":
-    main()
-```
-
-### How to Create and Run a Custom Mission:
-1. Create a new Python file on your host machine inside `ros2_ws/src/quad_core/` (e.g., `ros2_ws/src/quad_core/my_custom_mission.py`).
-2. Implement your flight pattern using the `DroneInterface` methods.
-3. Edit the `Makefile` or run the script directly inside the container:
-   ```bash
-   # Run your custom mission using make command structure:
-   docker exec -it aerostack2 python3 /ros2_ws/src/quad_core/my_custom_mission.py
-   ```
-   *Note: Because the directory `./ros2_ws` is live-mounted from your host to the docker container, you do not need to rebuild the Docker image to update Python mission code. Simply save the file on your host and run it inside the container.*
-
----
-
-## 5. Sim-to-Real Hardware Deployment
-
-To transition your flight stack to real hardware, use an Orange Pi 5 companion computer connected to a Pixhawk autopilot via a UART serial link.
-
-### Hardware Architecture:
-```
-Intel RealSense D435i  ──(USB 3.0)──>  Orange Pi 5  ──(TELEM2 UART)──>  Pixhawk (PX4)
-```
-
-### Step-by-Step Hardware Execution:
-1. Connect the RealSense D435i to a USB 3.0 port on the Orange Pi.
-2. Connect TELEM2 TX/RX pins from the Pixhawk to the RX/TX UART pins on the Orange Pi.
-3. Flash the Pixhawk parameters to disable GPS and enable external vision height/odometry input:
-   * Load the `ros2_ws/src/quad_core/config/ekf2_vio.params` file via QGroundControl.
-   * Reboot the Pixhawk.
-4. Clone the repository on the Orange Pi and build the hardware image:
-   ```bash
-   git clone https://github.com/abhishekbera86/gps-denied-drone.git
-   cd gps-denied-drone
-   
-   # Build the ARM64 image with librealsense SDK v2.58.2 + OpenVINS VIO
-   make build-hw
-   ```
-5. Launch the hardware stack on the Orange Pi:
-   ```bash
-   make hw
-   ```
-   This compiles your local workspace and launches `ros2 launch quad_real hw.launch.py`, starting the camera drivers, the Pixhawk serial bridge, the state estimator, and the motion controller.
-6. Execute the identical mission file:
-   ```bash
-   make mission
-   ```
-
----
-
-## 6. Optional: 3D Visualisation & Graphical Tools (Foxglove / RViz / Gazebo)
-
-### 6.1. What is `as2_platform_multirotor_simulator`?
-The **`as2_platform_multirotor_simulator`** is a built-in mathematical flight dynamics engine developed natively for Aerostack2. 
-* **How it works**: Instead of launching a heavy 3D rendering environment (like Gazebo or Webots) to compute gravity, aerodynamics, thrust, and collision forces, it models the drone namespace mathematically as a rigid body.
-* **Why we use it**: Because it does not load meshes or render pixels, it runs 100% headlessly inside a terminal. It requires **no graphics card (GPU)**, uses negligible CPU/RAM, and starts in less than a second—making it perfect for server, terminal-only, or Docker-based workflows.
-
----
-
-### 6.2. Web-Based 3D Visualisation via Foxglove Studio (Recommended for Docker-Only)
-If you do not have ROS 2 installed on your host system and want to avoid complex GUI/X11 socket forwarding, you can use **Foxglove Studio**. It runs in any web browser and connects to a WebSocket bridge running inside the container.
-
-1. **Rebuild the Container**: (if you have not rebuilt since adding the foxglove package):
-   ```bash
-   make build
-   ```
-2. **Start the simulation world**:
-   ```bash
-   make sim
-   ```
-3. **Launch the Foxglove Bridge**: Open a new terminal on your host and run:
-   ```bash
-   make foxglove
-   ```
-4. **Connect to the Viewer**:
-   * Open your host web browser and navigate to: **[https://studio.foxglove.dev](https://studio.foxglove.dev)**
-   * Select **Open Connection**.
-   * Choose **Foxglove WebSocket**.
-   * Enter the WebSocket URL: **`ws://localhost:8765`** and click **Connect**.
-5. **Add 3D/Telemetries Panels**:
-   * Add a **3D Panel** to visualize coordinate frame transformations (TFs) and the drone's trajectory path.
-   * Add **Plot Panels** to graph position `/drone0/self_localization/pose` in real-time.
-
----
-
-### 6.3. Visualising Flight Data in RViz 2
-
-If you want to run RViz 2, you can do so either directly on your host machine or via a dedicated Docker container:
-
-#### Option A: Running RViz 2 directly on the Host
-If you have ROS 2 Humble installed on your host Linux system:
-1. Open a new terminal on your host machine.
-2. Launch RViz 2:
-   ```bash
-   rviz2
-   ```
-3. Set **Fixed Frame** to `drone0/odom` or `earth`.
-4. Click **Add** (bottom left), select the **By topic** tab, and add:
-   * **`/drone0/self_localization/pose`** (Displays a coordinate axis of the drone's estimated position)
-   * **`/drone0/sensor_measurements/imu`** (Displays acceleration/angular velocity vectors)
-
-#### Option B: Running RViz 2 via Docker Container (Host ROS-free)
-If your host does NOT have ROS 2 installed, you can launch a GUI-forwarded RViz container:
-1. Allow local connections to your host's X11 display:
-   ```bash
-   xhost +local:docker
-   ```
-2. Run RViz inside a temporary ROS 2 Docker container with GUI forwarding:
-   ```bash
-   docker run -it --rm \
-     --net=host \
-     --ipc=host \
-     --env="DISPLAY" \
-     --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
-     osrf/ros:humble-desktop \
-     rviz2
-   ```
-
----
-
-### 6.2. Switching to 3D Gazebo Simulation
-
-If you want a full 3D visual physics simulation (instead of the lightweight headless multirotor simulator), you can switch to **Gazebo Harmonic** or **Ignition Gazebo**. Note that this requires a GPU or high-end CPU on your host.
-
-To enable Gazebo:
-1. Update `ros2_ws/src/quad_sim/launch/sim.launch.py` to replace the `as2_platform_multirotor_simulator` node inclusion with `as2_platform_ign_gazebo`.
-2. Allow GUI forwarding in docker compose by editing `docker-compose.yml` to pass the local graphics card device and socket:
-   ```yaml
-   devices:
-     - /dev/dri:/dev/dri
-   environment:
-     - DISPLAY=${DISPLAY}
-     - QT_X11_NO_MITSHM=1
-   volumes:
-     - /tmp/.X11-unix:/tmp/.X11-unix:rw
-   ```
-3. Launch `make sim` as usual. The Gazebo GUI window will open on your host screen.
-
----
-
-## 7. Commands Reference Cheat Sheet
-
-| Command | Action | Location |
-|---|---|---|
-| `make build` | Builds the default Aerostack2 image | Dev Host |
-| `make sim` | Starts container and launches the simulation nodes | Dev Host |
-| `make view` | Launches the live alphanumeric terminal viewer/dashboard | Dev Host / OPi 5 |
-| `make mission` | Executes the high-level Python mission script | Dev Host / OPi 5 |
-| `make stop` | Shuts down and cleans up all running containers | Dev Host / OPi 5 |
-| `make shell` | Enters an interactive bash terminal inside the running container | Dev Host / OPi 5 |
-| `make logs` | Tails live logging from all active container services | Dev Host / OPi 5 |
-| `make health` | Verifies ROS 2 topics and node health status | Dev Host / OPi 5 |
-| `make build-hw` | Builds the hardware-specific container image (ARM64) | Orange Pi 5 |
-| `make hw` | Launches the real hardware drone nodes (RealSense + Pixhawk UART) | Orange Pi 5 |
-| `make ps` | Displays currently active Docker containers | Dev Host / OPi 5 |
+This repo is under active development. Phase 0 (PX4 SITL + Gazebo Harmonic +
+ROS 2 bridge, everything above) is complete and verified. Still to come, in
+order: an offboard hover control node, pluggable mission scripts, GPS-denied
+VIO in simulation, then the same code running on the Orange Pi 5 Plus +
+Pixhawk 6 + RealSense D435i, and finally SLAM/Nav2. Full phase-by-phase
+detail lives in `IMPLEMENTATION_PLAN.md` (local, gitignored, not pushed —
+it's an internal working document that changes too fast to keep in sync with
+the public repo).
