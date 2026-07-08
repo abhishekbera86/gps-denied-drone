@@ -8,7 +8,9 @@
 # =============================================================================
 set -e
 
-UXRCE_DDS_PORT="${UXRCE_DDS_PORT:-8888}"
+# Trim whitespace: a padded value (e.g. from an inline comment in .env)
+# makes MicroXRCEAgent reject the port and die silently at container boot.
+UXRCE_DDS_PORT="$(echo "${UXRCE_DDS_PORT:-8888}" | tr -d '[:space:]')"
 
 MicroXRCEAgent udp4 -p "${UXRCE_DDS_PORT}" > /var/log/microxrce_agent.log 2>&1 &
 echo "Micro-XRCE-DDS-Agent started on udp4 port ${UXRCE_DDS_PORT} (log: /var/log/microxrce_agent.log)"

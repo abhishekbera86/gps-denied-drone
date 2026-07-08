@@ -16,7 +16,10 @@
 include .env
 export
 
-.PHONY: help build sim flight-test stop shell shell-px4 logs ps clean clean-all
+.PHONY: help build sim flight-test mission stop shell shell-px4 logs ps clean clean-all
+
+# Mission flown by `make mission` — square or survey (see common_missions).
+MISSION ?= square
 
 help:
 	@echo ""
@@ -29,6 +32,7 @@ help:
 	@echo "  ║  DAILY WORKFLOW                              ║"
 	@echo "  ║    make sim         Start PX4 SITL + ROS 2    ║"
 	@echo "  ║    make flight-test Fly takeoff-hover-land    ║"
+	@echo "  ║    make mission     Fly MISSION=square|survey ║"
 	@echo "  ║    make shell      Shell into ros2-autonomy   ║"
 	@echo "  ║    make shell-px4  Shell into px4-sim          ║"
 	@echo "  ║    make logs       Tail all container logs    ║"
@@ -72,6 +76,22 @@ flight-test:
 		source /ros2_ws_build/install/setup.bash && \
 		ros2 run common_control offboard_control_node \
 			--ros-args -p takeoff_height_m:=2.0 -p hover_seconds:=5.0"
+
+# Fly a named waypoint mission (Phase 2): make mission MISSION=square|survey.
+# Same build-then-run flow as flight-test; the mission takes off, flies its
+# waypoint sequence, returns to the start and lands.
+mission:
+	@echo "==> Building mission packages and flying the '$(MISSION)' mission..."
+	@docker exec -it ros2-autonomy bash -c "\
+		source /opt/ros/humble/setup.bash && \
+		source /opt/px4_ros2_ws/install/setup.bash && \
+		mkdir -p /ros2_ws_build && cd /ros2_ws_build && \
+		colcon build --symlink-install --base-paths /ros2_ws/src \
+			--build-base /ros2_ws_build/build \
+			--install-base /ros2_ws_build/install \
+			--packages-up-to common_missions && \
+		source /ros2_ws_build/install/setup.bash && \
+		ros2 launch common_missions mission.launch.py mission:=$(MISSION)"
 
 stop:
 	@docker compose --profile sim down

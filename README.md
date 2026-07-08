@@ -112,6 +112,11 @@ make sim
 # Step 4 — wait ~30-60 s (PX4's EKF2 estimator must converge after boot),
 #          then fly the takeoff-hover-land test in a second terminal
 make flight-test
+
+# Step 5 — fly a waypoint mission (square by default; MISSION=survey for the
+#          lawnmower coverage pattern)
+make mission
+make mission MISSION=survey
 ```
 
 ### What each step does
@@ -148,6 +153,19 @@ Expected output ends with:
 [INFO] [...]: Hover complete — landing
 [INFO] [...]: Landed and disarmed — mission complete
 ```
+
+`make mission` runs a named waypoint mission from the `common_missions`
+package via `ros2 launch common_missions mission.launch.py mission:=<name>`:
+- `square` (default) — 4 m square at takeoff height, nose pointed along each
+  leg, landing back at the start.
+- `survey` — lawnmower coverage of an 8 m × 6 m rectangle with 2 m lane
+  spacing, returning to the start to land.
+
+Both are subclasses of `MissionBase`, which reuses the entire Phase 1
+arm/offboard/takeoff/land state machine and only supplies waypoints — a new
+mission is ~25 lines (declare geometry parameters, return a waypoint list).
+Waypoint arrival is judged by position tolerance (0.5 m default), never by
+elapsed time, so missions behave identically on slow and fast hosts.
 
 ### Inspecting the running system
 
@@ -296,6 +314,18 @@ topics will cross-talk; set a unique `ROS_DOMAIN_ID` for this stack (add it
 to the `environment:` of `ros2-autonomy` in `docker-compose.yml`) if that
 applies to you.
 
+**12. Never put an inline `# comment` after a value in `.env`.** docker
+compose strips the comment itself but keeps the whitespace padding before it
+as part of the value — `UXRCE_DDS_PORT=8888   # comment` becomes the string
+`"8888   "`. MicroXRCEAgent rejects the padded port and exits immediately at
+container boot, so the PX4 ↔ ROS 2 bridge never comes up: every `/fmu/*`
+topic exists but is silent, and any control node waits forever with
+`nav_state=0, arming_state=0`. Diagnose with
+`docker exec ros2-autonomy cat /var/log/microxrce_agent.log` (shows a
+`'--port <value>' is required` usage error) — fixed by keeping `.env`
+comments on their own lines, and the entrypoint now also trims whitespace
+from the port value as a safety net.
+
 ---
 
 ## 6. Repository Layout
@@ -308,11 +338,13 @@ docker/
   px4_sitl_overrides/             SITL-only PX4 param overrides (see §5, issue 4)
 docker-compose.yml                sim profile: px4-sim + ros2-autonomy (host networking)
 .env                              Version pins (PX4, px4_msgs/px4_ros_com, Gazebo model)
-Makefile                          build / sim / flight-test / stop / shell / logs / ps
+Makefile                          build / sim / flight-test / mission / stop / shell / logs
 ros2_ws/src/
   common_control/                 OffboardControlNode — heartbeat/arm/offboard/
-                                   takeoff/hover/land state machine (Phase 1 ✓)
-  (common_missions, common_perception, sim_bringup, hw_bringup — future phases)
+                                   takeoff/waypoints/hover/land state machine (Phase 1 ✓)
+  common_missions/                MissionBase + square/survey missions, selected
+                                   via mission:= launch arg (Phase 2 ✓)
+  (common_perception, sim_bringup, hw_bringup — future phases)
 ```
 
 ---
@@ -324,6 +356,7 @@ ros2_ws/src/
 | `make build` | Build `px4-sim` + `ros2-autonomy` images |
 | `make sim` | Start PX4 SITL (Gazebo Harmonic, headless) + the ROS 2 bridge container |
 | `make flight-test` | Build `common_control` in-container and fly takeoff → hover → land |
+| `make mission` | Fly a waypoint mission: `MISSION=square` (default) or `MISSION=survey` |
 | `make shell` | Bash inside `ros2-autonomy` |
 | `make shell-px4` | Bash inside `px4-sim` |
 | `make logs` | Tail logs from both containers |
@@ -343,8 +376,9 @@ This repo is under active development.
 - **Phase 1 — complete**: `common_control/offboard_control_node` flies the
   full cycle in sim — arm → offboard → takeoff → hover → land → disarm
   (`make flight-test`).
-- **Phase 2 — next**: pluggable missions (`common_missions`: square, survey,
-  … selected by name) on top of the Phase 1 control primitives.
+- **Phase 2 — complete**: pluggable missions (`common_missions`: square,
+  survey, selected by name via `make mission MISSION=<name>`) on top of the
+  Phase 1 control primitives.
 - **Phase 3**: GPS-denied flight in sim — OpenVINS VIO fed by the simulated
   depth camera, fused into PX4 EKF2 with GPS disabled.
 - **Phase 4**: same code on real hardware — Orange Pi 5 Plus + Pixhawk 6 +

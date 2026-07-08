@@ -43,22 +43,34 @@ PX4_QOS = QoSProfile(
 class FlightState(Enum):
     INIT = auto()
     TAKEOFF = auto()
+    WAYPOINTS = auto()
     HOVER = auto()
     LAND = auto()
     DONE = auto()
 
 
 class OffboardControlNode(Node):
+    """Arm/takeoff/land state machine with an optional waypoint queue.
 
-    def __init__(self) -> None:
-        super().__init__('offboard_control_node')
+    With no waypoints set (the default), flies the Phase 1 profile:
+    takeoff → hover `hover_seconds` → land. Call `set_waypoints()` before
+    takeoff completes (normally right after __init__) to instead fly each
+    NED (x, y, z, yaw) target in order after takeoff, then land at the
+    final waypoint. Waypoint completion is keyed off position tolerance,
+    never elapsed time — the sim can run much slower than wall clock.
+    """
+
+    def __init__(self, node_name: str = 'offboard_control_node') -> None:
+        super().__init__(node_name)
 
         self.declare_parameter('takeoff_height_m', 2.0)
         self.declare_parameter('hover_seconds', 5.0)
         self.declare_parameter('control_rate_hz', 10.0)
+        self.declare_parameter('waypoint_tolerance_m', 0.5)
 
         self._takeoff_height_m = self.get_parameter('takeoff_height_m').value
         self._hover_seconds = self.get_parameter('hover_seconds').value
+        self._waypoint_tolerance_m = self.get_parameter('waypoint_tolerance_m').value
         control_rate_hz = self.get_parameter('control_rate_hz').value
 
         # NED frame: down is positive z, so climbing means z becomes negative.
@@ -86,6 +98,11 @@ class OffboardControlNode(Node):
         self._hover_ticks_remaining = 0
         self._control_rate_hz = control_rate_hz
 
+        # NED (x, y, z, yaw) targets flown in order after takeoff; empty
+        # means the plain takeoff-hover-land profile.
+        self._waypoints: list[tuple[float, float, float, float]] = []
+        self._waypoint_index = 0
+
         self._timer = self.create_timer(1.0 / control_rate_hz, self._control_loop)
 
         self.get_logger().info(
@@ -110,12 +127,25 @@ class OffboardControlNode(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self._offboard_control_mode_pub.publish(msg)
 
-    def _publish_setpoint(self, x: float, y: float, z: float) -> None:
+    def _publish_setpoint(self, x: float, y: float, z: float, yaw: float = 0.0) -> None:
         msg = TrajectorySetpoint()
         msg.position = [x, y, z]
-        msg.yaw = 0.0
+        msg.yaw = yaw
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self._trajectory_setpoint_pub.publish(msg)
+
+    # ── Waypoint primitive ───────────────────────────────────────────────
+    def set_waypoints(self, waypoints: list[tuple[float, float, float, float]]) -> None:
+        """Queue NED (x, y, z, yaw_rad) targets to fly after takeoff.
+
+        Remember z is NED: 2 m above ground is z = -2.0.
+        """
+        self._waypoints = list(waypoints)
+        self._waypoint_index = 0
+
+    def _distance_to(self, x: float, y: float, z: float) -> float:
+        pos = self._vehicle_local_position
+        return ((pos.x - x) ** 2 + (pos.y - y) ** 2 + (pos.z - z) ** 2) ** 0.5
 
     def _publish_vehicle_command(self, command: int, **params) -> None:
         msg = VehicleCommand()
@@ -164,7 +194,8 @@ class OffboardControlNode(Node):
             self._heartbeat_count += 1
 
             if self._heartbeat_count >= OFFBOARD_HEARTBEATS_BEFORE_SWITCH:
-                offboard = self._vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD
+                offboard = (self._vehicle_status.nav_state
+                            == VehicleStatus.NAVIGATION_STATE_OFFBOARD)
                 armed = self._vehicle_status.arming_state == VehicleStatus.ARMING_STATE_ARMED
 
                 if offboard and armed:
@@ -190,10 +221,29 @@ class OffboardControlNode(Node):
         if self._state == FlightState.TAKEOFF:
             self._publish_setpoint(0.0, 0.0, self._target_z)
             if self._vehicle_local_position.z <= self._target_z + 0.2:
+                if self._waypoints:
+                    self.get_logger().info(
+                        f'Reached takeoff height — flying {len(self._waypoints)} waypoints')
+                    self._state = FlightState.WAYPOINTS
+                else:
+                    self.get_logger().info(
+                        f'Reached takeoff height — hovering for {self._hover_seconds}s')
+                    self._hover_ticks_remaining = int(self._hover_seconds * self._control_rate_hz)
+                    self._state = FlightState.HOVER
+            return
+
+        if self._state == FlightState.WAYPOINTS:
+            x, y, z, yaw = self._waypoints[self._waypoint_index]
+            self._publish_setpoint(x, y, z, yaw)
+            if self._distance_to(x, y, z) <= self._waypoint_tolerance_m:
                 self.get_logger().info(
-                    f'Reached takeoff height — hovering for {self._hover_seconds}s')
-                self._hover_ticks_remaining = int(self._hover_seconds * self._control_rate_hz)
-                self._state = FlightState.HOVER
+                    f'Waypoint {self._waypoint_index + 1}/{len(self._waypoints)} reached '
+                    f'({x:.1f}, {y:.1f}, {z:.1f})')
+                self._waypoint_index += 1
+                if self._waypoint_index >= len(self._waypoints):
+                    self.get_logger().info('All waypoints reached — landing')
+                    self._land()
+                    self._state = FlightState.LAND
             return
 
         if self._state == FlightState.HOVER:
