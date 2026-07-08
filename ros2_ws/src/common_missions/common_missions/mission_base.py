@@ -6,11 +6,17 @@ class already handles arming, offboard mode, takeoff, waypoint following,
 landing and disarm. Subclasses only describe *where to fly*:
 
     class MyMission(MissionBase):
-        def declare_mission_parameters(self):   # ROS params for geometry
-            self.declare_parameter('side_length_m', 4.0)
+        def declare_mission_parameters(self):   # required params — no
+            self._side_length_m = self._require_param('side_length_m')
 
         def build_waypoints(self):              # the actual route
             return [self.waypoint(north, east, height_m, yaw_deg), ...]
+
+`_require_param` (inherited from OffboardControlNode) has no code-side
+default — every mission parameter must come from a launch params_file (see
+sim_bringup/config/sim_params.yaml) or an explicit `-p` override, and
+startup fails loudly if one is missing rather than silently flying a
+default geometry.
 
 Waypoints are given in the friendly frame (north, east, height-above-ground,
 yaw in degrees); `waypoint()` converts to the NED tuple common_control flies.

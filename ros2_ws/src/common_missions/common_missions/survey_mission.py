@@ -15,15 +15,15 @@ class SurveyMission(MissionBase):
         super().__init__('survey_mission')
 
     def declare_mission_parameters(self) -> None:
-        self.declare_parameter('area_length_m', 8.0)
-        self.declare_parameter('area_width_m', 6.0)
-        self.declare_parameter('lane_spacing_m', 2.0)
+        self._area_length_m = self._require_param('area_length_m')
+        self._area_width_m = self._require_param('area_width_m')
+        self._lane_spacing_m = self._require_param('lane_spacing_m')
 
     def build_waypoints(self) -> list[tuple[float, float, float, float]]:
-        length = self.get_parameter('area_length_m').value
-        width = self.get_parameter('area_width_m').value
-        spacing = self.get_parameter('lane_spacing_m').value
-        height = self.get_parameter('takeoff_height_m').value
+        length = self._area_length_m
+        width = self._area_width_m
+        spacing = self._lane_spacing_m
+        height = self._takeoff_height_m
 
         corners = []
         east = 0.0

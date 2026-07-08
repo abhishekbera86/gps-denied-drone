@@ -1,22 +1,55 @@
-# sim_params.yaml — simulation tuning for the shared autonomy nodes.
+# sim_params.yaml — per-mission parameter profiles for the shared autonomy
+# nodes, simulation values.
 #
-# The `/**` wildcard applies these to every node launched under this bringup;
-# each node picks up only the parameters it declares (extras are ignored). So
-# one file covers the hover node (offboard_control_node) and both mission
-# nodes (square_mission, survey_mission). hw_bringup has its own copy of this
-# file with real-flight values — that params split is the whole point.
-/**:
-  ros__parameters:
-    # ── common_control (offboard_control_node) ──────────────────────────────
-    takeoff_height_m: 2.0        # NED climb target (m above ground)
-    hover_seconds: 5.0           # hover dwell for the plain flight-test
-    control_rate_hz: 10.0        # setpoint/heartbeat publish rate
-    waypoint_tolerance_m: 0.5    # arrival radius for mission waypoints
+# STRUCTURE: one top-level section per mission, named exactly after that
+# mission's ROS 2 node name (see the `super().__init__('square_mission')`
+# call etc. in each mission's Python file — the section key IS the node
+# name). ROS 2's standard parameter loading matches each running node to
+# its OWN section automatically, so it's safe to keep every mission's
+# tuning in this single file — a node only ever reads the section whose
+# name matches itself.
+#
+# TO CHANGE A MISSION: edit the numbers below and re-run
+# `make mission MISSION=<name>` (or `make flight-test` for the hover
+# profile). This is a launch-time YAML, not baked into the colcon build —
+# no code change and no rebuild needed. hw_bringup/config/hw_params.yaml is
+# the same structure with real-flight values (Phase 4).
+#
+# FUTURE EXTENSION POINT (not implemented yet): a planned operator app will
+# let someone pick a mission and adjust these same values before launch,
+# then hand this file (or a generated equivalent) to
+# `ros2 launch sim_bringup sim.launch.py params_file:=<path>`. This
+# structure — one flat, human-editable file, one section per mission name —
+# is deliberately shaped so that adding such a generator later needs no
+# further restructuring of the config format itself.
 
-    # ── common_missions geometry ────────────────────────────────────────────
-    # square_mission
-    side_length_m: 4.0
-    # survey_mission
-    area_length_m: 8.0
-    area_width_m: 6.0
-    lane_spacing_m: 2.0
+# ── hover profile (make flight-test / action:=hover) ───────────────────────
+offboard_control_node:
+  ros__parameters:
+    takeoff_height_m: 2.0        # NED climb target (m above ground)
+    hover_seconds: 5.0           # hover dwell before landing
+    control_rate_hz: 10.0        # setpoint/heartbeat publish rate
+    waypoint_tolerance_m: 0.5    # arrival radius (also used for takeoff height)
+    max_velocity_m_s: 1.0        # cruise speed cap toward any setpoint (m/s)
+
+# ── square mission (make mission MISSION=square) ───────────────────────────
+square_mission:
+  ros__parameters:
+    takeoff_height_m: 2.0
+    hover_seconds: 5.0           # unused once waypoints are flying; kept for parity
+    control_rate_hz: 10.0
+    waypoint_tolerance_m: 0.5
+    max_velocity_m_s: 1.0        # cruise speed cap toward any setpoint (m/s)
+    side_length_m: 3.0           # square side length (m)
+
+# ── survey mission (make mission MISSION=survey) ───────────────────────────
+survey_mission:
+  ros__parameters:
+    takeoff_height_m: 2.0
+    hover_seconds: 5.0
+    control_rate_hz: 10.0
+    waypoint_tolerance_m: 0.5
+    max_velocity_m_s: 1.0        # cruise speed cap toward any setpoint (m/s)
+    area_length_m: 5.0           # lawnmower lane length, north axis (m)
+    area_width_m: 5.0            # coverage width, east axis (m)
+    lane_spacing_m: 0.5          # spacing between adjacent lanes (m)

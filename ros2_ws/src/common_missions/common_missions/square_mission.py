@@ -14,11 +14,11 @@ class SquareMission(MissionBase):
         super().__init__('square_mission')
 
     def declare_mission_parameters(self) -> None:
-        self.declare_parameter('side_length_m', 4.0)
+        self._side_length_m = self._require_param('side_length_m')
 
     def build_waypoints(self) -> list[tuple[float, float, float, float]]:
-        side = self.get_parameter('side_length_m').value
-        height = self.get_parameter('takeoff_height_m').value
+        side = self._side_length_m
+        height = self._takeoff_height_m
 
         corners = [(side, 0.0), (side, side), (0.0, side), (0.0, 0.0)]
         waypoints = []

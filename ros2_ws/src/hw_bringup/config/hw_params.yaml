@@ -1,21 +1,42 @@
-# hw_params.yaml — real-flight tuning for the shared autonomy nodes (Phase 4).
+# hw_params.yaml — per-mission parameter profiles for the shared autonomy
+# nodes, real-flight values (Phase 4).
 #
-# Mirror of sim_bringup/config/sim_params.yaml with conservative first-flight
-# values. UNTESTED — starting points only; retune during the tethered hover
-# test (props off first). The `/**` wildcard applies to every node; each picks
-# up only the parameters it declares.
-/**:
+# Same structure as sim_bringup/config/sim_params.yaml — one top-level
+# section per mission, named exactly after that mission's ROS 2 node name.
+# See sim_params.yaml's header comment for the full explanation of how this
+# is loaded and the planned future operator-app extension point.
+#
+# UNTESTED — these are conservative starting points, not validated numbers.
+# Retune during the tethered hover test (props off first) before trusting
+# any of these on a free-flying vehicle.
+
+# ── hover profile (Phase 4: action:=hover) ──────────────────────────────────
+offboard_control_node:
   ros__parameters:
-    # ── common_control (offboard_control_node) ──────────────────────────────
     takeoff_height_m: 1.5        # lower first-flight climb than sim (2.0)
     hover_seconds: 5.0
     control_rate_hz: 10.0
     waypoint_tolerance_m: 0.7    # looser arrival radius for real EKF/VIO drift
+    max_velocity_m_s: 0.5        # slower than sim (1.0) for a first real flight
 
-    # ── common_missions geometry (smaller footprint for a real test area) ───
-    # square_mission
-    side_length_m: 2.0
-    # survey_mission
+# ── square mission (Phase 4: action:=mission mission:=square) ──────────────
+square_mission:
+  ros__parameters:
+    takeoff_height_m: 1.5
+    hover_seconds: 5.0
+    control_rate_hz: 10.0
+    waypoint_tolerance_m: 0.7
+    max_velocity_m_s: 0.5
+    side_length_m: 2.0           # smaller footprint for a real test area
+
+# ── survey mission (Phase 4: action:=mission mission:=survey) ──────────────
+survey_mission:
+  ros__parameters:
+    takeoff_height_m: 1.5
+    hover_seconds: 5.0
+    control_rate_hz: 10.0
+    waypoint_tolerance_m: 0.7
+    max_velocity_m_s: 0.5
     area_length_m: 4.0
     area_width_m: 3.0
     lane_spacing_m: 1.5

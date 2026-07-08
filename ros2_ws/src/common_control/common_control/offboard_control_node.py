@@ -17,6 +17,7 @@ refuses the mode switch.
 from enum import Enum, auto
 
 import rclpy
+from rclpy.exceptions import ParameterUninitializedException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
@@ -58,20 +59,31 @@ class OffboardControlNode(Node):
     NED (x, y, z, yaw) target in order after takeoff, then land at the
     final waypoint. Waypoint completion is keyed off position tolerance,
     never elapsed time — the sim can run much slower than wall clock.
+
+    Every tuning value (takeoff height, hover time, control rate, waypoint
+    tolerance, max velocity, and — in subclasses — mission geometry) is a
+    REQUIRED parameter with no code-side default: it must come from a launch
+    `params_file` (see sim_bringup/config/sim_params.yaml or
+    hw_bringup/config/hw_params.yaml) or an explicit `-p name:=value`
+    override. A missing value fails node startup loudly via `_require_param`
+    rather than silently flying with an unintended default.
+
+    `max_velocity_m_s` caps how fast the vehicle cruises toward each
+    setpoint (takeoff, hover position, or a waypoint) — see
+    `_capped_velocity_toward`. Without it, PX4's own offboard position
+    controller accelerates toward every setpoint at its internal velocity
+    limit, which is usually much faster than desirable for watching a
+    mission fly or for a first real-hardware flight.
     """
 
     def __init__(self, node_name: str = 'offboard_control_node') -> None:
         super().__init__(node_name)
 
-        self.declare_parameter('takeoff_height_m', 2.0)
-        self.declare_parameter('hover_seconds', 5.0)
-        self.declare_parameter('control_rate_hz', 10.0)
-        self.declare_parameter('waypoint_tolerance_m', 0.5)
-
-        self._takeoff_height_m = self.get_parameter('takeoff_height_m').value
-        self._hover_seconds = self.get_parameter('hover_seconds').value
-        self._waypoint_tolerance_m = self.get_parameter('waypoint_tolerance_m').value
-        control_rate_hz = self.get_parameter('control_rate_hz').value
+        self._takeoff_height_m = self._require_param('takeoff_height_m')
+        self._hover_seconds = self._require_param('hover_seconds')
+        self._waypoint_tolerance_m = self._require_param('waypoint_tolerance_m')
+        self._max_velocity_m_s = self._require_param('max_velocity_m_s')
+        control_rate_hz = self._require_param('control_rate_hz')
 
         # NED frame: down is positive z, so climbing means z becomes negative.
         self._target_z = -abs(self._takeoff_height_m)
@@ -107,7 +119,33 @@ class OffboardControlNode(Node):
 
         self.get_logger().info(
             f'OffboardControlNode starting: takeoff_height={self._takeoff_height_m}m, '
-            f'hover={self._hover_seconds}s')
+            f'hover={self._hover_seconds}s, max_velocity={self._max_velocity_m_s}m/s')
+
+    # ── Parameter loading ────────────────────────────────────────────────
+    def _require_param(self, name: str) -> float:
+        """Declare and read a required float parameter — no code default.
+
+        Declaring with `Parameter.Type.DOUBLE` (a type, not a value) means
+        the parameter has no fallback: with no params_file/-p override,
+        rclpy raises `ParameterUninitializedException` the moment we read
+        it. We catch that and re-raise with an actionable message — which
+        params_file section was expected — so a missing or misspelled
+        config entry is a loud, diagnosable startup failure instead of a
+        silent wrong-geometry flight.
+        """
+        self.declare_parameter(name, rclpy.Parameter.Type.DOUBLE)
+        try:
+            return self.get_parameter(name).value
+        except ParameterUninitializedException:
+            message = (
+                f"Required parameter '{name}' was not provided to node "
+                f"'{self.get_name()}'. Launch with a params_file that has a "
+                f"'{self.get_name()}:' section setting '{name}' — see "
+                f"sim_bringup/config/sim_params.yaml — or pass "
+                f"'-p {name}:=<value>' directly."
+            )
+            self.get_logger().fatal(message)
+            raise RuntimeError(message) from None
 
     # ── Subscribers ──────────────────────────────────────────────────────
     def _on_local_position(self, msg: VehicleLocalPosition) -> None:
@@ -130,9 +168,26 @@ class OffboardControlNode(Node):
     def _publish_setpoint(self, x: float, y: float, z: float, yaw: float = 0.0) -> None:
         msg = TrajectorySetpoint()
         msg.position = [x, y, z]
+        msg.velocity = self._capped_velocity_toward(x, y, z)
         msg.yaw = yaw
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self._trajectory_setpoint_pub.publish(msg)
+
+    def _capped_velocity_toward(self, x: float, y: float, z: float) -> list[float]:
+        """Feed-forward velocity toward (x, y, z), capped at max_velocity_m_s.
+
+        Position alone lets PX4's offboard position controller accelerate
+        toward the target at its own (much higher) internal velocity limit —
+        this feed-forward, combined with the position setpoint, is what
+        actually gives max_velocity_m_s control over cruise speed.
+        """
+        pos = self._vehicle_local_position
+        dx, dy, dz = x - pos.x, y - pos.y, z - pos.z
+        distance = (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
+        if distance < 1e-3:
+            return [0.0, 0.0, 0.0]
+        scale = self._max_velocity_m_s / distance
+        return [dx * scale, dy * scale, dz * scale]
 
     # ── Waypoint primitive ───────────────────────────────────────────────
     def set_waypoints(self, waypoints: list[tuple[float, float, float, float]]) -> None:

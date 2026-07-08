@@ -22,11 +22,12 @@ machine. All of it lives in containers.
    - [4.1 Clone the Repo](#41-clone-the-repo)
    - [4.2 Build the Docker Images](#42-build-the-docker-images)
    - [4.3 Start the Simulation](#43-start-the-simulation)
-   - [4.4 Wait for PX4 to Be Ready to Arm](#44-wait-for-px4-to-be-ready-to-arm)
-   - [4.5 Fly the Hover Test](#45-fly-the-hover-test)
-   - [4.6 Fly a Mission](#46-fly-a-mission)
-   - [4.7 Inspect the Running System](#47-inspect-the-running-system)
-   - [4.8 Stop the Stack](#48-stop-the-stack)
+   - [4.4 Build the ROS 2 Workspace](#44-build-the-ros-2-workspace)
+   - [4.5 Wait for PX4 to Be Ready to Arm](#45-wait-for-px4-to-be-ready-to-arm)
+   - [4.6 Fly the Hover Test](#46-fly-the-hover-test)
+   - [4.7 Fly a Mission](#47-fly-a-mission)
+   - [4.8 Inspect the Running System](#48-inspect-the-running-system)
+   - [4.9 Stop the Stack](#49-stop-the-stack)
 5. [Command Reference](#5-command-reference)
 6. [ROS 2 Topics Reference](#6-ros-2-topics-reference)
 7. [ROS 2 Parameters Reference](#7-ros-2-parameters-reference)
@@ -230,7 +231,27 @@ make logs
 You should see Gazebo Harmonic spawn `x500_depth_0` and `uxrce_dds_client`
 connect to `127.0.0.1:8888`.
 
-### 4.4 Wait for PX4 to Be Ready to Arm
+### 4.4 Build the ROS 2 Workspace
+
+```bash
+make build-ws
+```
+
+Colcon-builds `common_control`, `common_missions`, `sim_bringup`, and
+`hw_bringup` inside `ros2-autonomy` with `--symlink-install`, into the
+persistent `/ros2_ws_build` volume. Source is live-mounted from
+`ros2_ws/src/` on the host, and `--symlink-install` means the install tree
+is symlinked back to that source rather than copied — so **you only need to
+re-run this after adding/removing a package or editing a `setup.py`/
+`package.xml`**. Editing a mission's Python, a launch file, or a params YAML
+(§7) takes effect on the *next* `make flight-test`/`make mission` with no
+rebuild at all — `make mission` and `make flight-test` deliberately don't
+colcon-build for you every time, so tuning-and-reflying stays fast.
+
+If you skip this step, `make flight-test`/`make mission` will tell you to
+run it — they check for the built workspace rather than silently failing.
+
+### 4.5 Wait for PX4 to Be Ready to Arm
 
 PX4's EKF2 state estimator needs **~30–60 seconds** after boot to converge
 before it will allow arming — this is normal PX4 behavior, not something
@@ -243,20 +264,18 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 # wait for: pre_flight_checks_pass: true
 ```
 
-### 4.5 Fly the Hover Test
+### 4.6 Fly the Hover Test
 
 In a second terminal (leave the sim running in the first):
 ```bash
 make flight-test
 ```
 
-This colcon-builds the ROS 2 workspace inside the container (source is
-live-mounted from `ros2_ws/src/` — edit on the host, no image rebuild needed)
-and runs `ros2 launch sim_bringup sim.launch.py action:=hover`, which:
+Runs `ros2 launch sim_bringup sim.launch.py action:=hover`, which:
 
 1. Streams the `OffboardControlMode` heartbeat + `TrajectorySetpoint` at 10 Hz
 2. Switches PX4 to offboard mode and arms (retrying once per second until
-   PX4 confirms via `vehicle_status` — see §4.4)
+   PX4 confirms via `vehicle_status` — see §4.5)
 3. Takes off to 2 m, hovers 5 s, lands, and PX4 auto-disarms on touchdown
 
 Expected output ends with:
@@ -267,7 +286,7 @@ Expected output ends with:
 [INFO] [...]: Landed and disarmed — mission complete
 ```
 
-### 4.6 Fly a Mission
+### 4.7 Fly a Mission
 
 ```bash
 make mission                    # square, the default
@@ -288,10 +307,13 @@ mission is ~25 lines (declare geometry parameters, return a waypoint list;
 see `ros2_ws/src/common_missions/`). Waypoint arrival is judged by position
 tolerance (0.5 m default), never by elapsed time, so missions behave
 identically on slow and fast hosts. Mission geometry and control tuning live
-in `sim_bringup/config/sim_params.yaml` (§7), not hardcoded — retune without
-touching Python.
+in `sim_bringup/config/sim_params.yaml` (§7) — **every one of these values is
+required, with no hardcoded fallback in the Python**: edit the YAML and
+re-run `make mission`, no rebuild needed (§4.4). If a value is missing from
+the YAML, the node fails loudly at startup with a `[FATAL]` log naming the
+exact missing parameter, instead of silently flying an unintended default.
 
-### 4.7 Inspect the Running System
+### 4.8 Inspect the Running System
 
 ```bash
 make shell             # bash inside ros2-autonomy (ROS 2 side)
@@ -317,7 +339,7 @@ cd /PX4-Autopilot/build/px4_sitl_default/rootfs
 /PX4-Autopilot/build/px4_sitl_default/bin/px4-listener health_report
 ```
 
-### 4.8 Stop the Stack
+### 4.9 Stop the Stack
 
 ```bash
 make stop
@@ -337,11 +359,12 @@ syntax) or as an environment variable before it.
 
 | Command | Parameters | What it does |
 |---|---|---|
-| `make build` | — | Builds the `px4-sim` and `ros2-autonomy` images. |
+| `make build` | — | Builds the `px4-sim` and `ros2-autonomy` **Docker images**. One-time, or after editing a Dockerfile. |
+| `make build-ws` | — | Colcon-builds the **ROS 2 workspace** inside `ros2-autonomy`. One-time, or after adding/removing a package or editing `setup.py`/`package.xml` — NOT needed after editing Python/launch/config files (§4.4). |
 | `make sim` | — | Starts PX4 SITL (Gazebo Harmonic, **headless**) + the ROS 2 bridge container. |
 | `make sim-gui` | `GZ_SW_RENDER=1` *(optional)* — forces software (llvmpipe) rendering if the GPU path fails | Same stack as `make sim`, but with the real Gazebo GUI window forwarded to the host X display. |
-| `make flight-test` | — | Builds the workspace and flies the hover test (arm → takeoff → hover → land) via `sim_bringup`. |
-| `make mission` | `MISSION=square` *(default)* or `MISSION=survey` | Builds the workspace and flies the named waypoint mission via `sim_bringup`. |
+| `make flight-test` | — | Flies the hover test (arm → takeoff → hover → land) via `sim_bringup`. Requires `make build-ws` first. |
+| `make mission` | `MISSION=square` *(default)* or `MISSION=survey` | Flies the named waypoint mission via `sim_bringup`. Requires `make build-ws` first. |
 | `make shell` | — | Opens a bash shell inside `ros2-autonomy` (the ROS 2 / DDS-bridge container). |
 | `make shell-px4` | — | Opens a bash shell inside `px4-sim` (the PX4 flight-controller container). |
 | `make logs` | — | Tails logs from both containers (`Ctrl-C` to stop tailing; containers keep running). |
@@ -386,40 +409,111 @@ Notes:
 
 ## 7. ROS 2 Parameters Reference
 
-Every `declare_parameter()` in the autonomy code, its default, and what it
-controls. In sim, these defaults are overridden by
+Every `declare_parameter()` in the autonomy code, and what it controls.
+**None of these have a hardcoded fallback in Python** — every value is
+declared with `Parameter.Type.DOUBLE` (a type, not a value) via the shared
+`_require_param()` helper in `OffboardControlNode`
+(`common_control/common_control/offboard_control_node.py`), so it MUST come
+from a launch `params_file` or an explicit `-p` override. If one is missing,
+node startup fails immediately with a `[FATAL]` log naming the exact
+parameter and the section it should have been in — never a silent flight
+with an unintended value. In sim, values come from
 `sim_bringup/config/sim_params.yaml`; the (untested, Phase 4) hardware
 equivalent is `hw_bringup/config/hw_params.yaml` with more conservative
-values. Edit the YAML to retune — no code changes needed.
+values. Edit the YAML to retune — no code change and no rebuild needed
+(§4.4).
+
+### How the mission parameter file is structured
+
+Both YAML files use one **top-level section per mission**, named exactly
+after that mission's ROS 2 node name (the string each mission passes to
+`super().__init__(...)`, e.g. `square_mission`). This is standard ROS 2
+parameter-file syntax — at launch, each node automatically reads only the
+section whose name matches itself, so every mission's tuning can live in one
+file without conflicting:
+
+```yaml
+# sim_bringup/config/sim_params.yaml
+offboard_control_node:        # the hover profile (action:=hover)
+  ros__parameters:
+    takeoff_height_m: 2.0
+    hover_seconds: 5.0
+    control_rate_hz: 10.0
+    waypoint_tolerance_m: 0.5
+    max_velocity_m_s: 1.0      # ← lower this if the vehicle moves too fast
+
+square_mission:                # action:=mission mission:=square
+  ros__parameters:
+    takeoff_height_m: 2.0
+    waypoint_tolerance_m: 0.5
+    max_velocity_m_s: 1.0
+    side_length_m: 4.0         # ← change this, then `make mission MISSION=square`
+
+survey_mission:                # action:=mission mission:=survey
+  ros__parameters:
+    takeoff_height_m: 2.0
+    area_length_m: 8.0
+    area_width_m: 6.0
+    lane_spacing_m: 2.0
+    max_velocity_m_s: 1.0
+```
+
+**To change a mission's behavior:** edit the numbers under its section and
+re-run `make mission MISSION=<name>` — this is a launch-time file, not
+compiled in, so no code change and no rebuild is needed. `hw_bringup/config/
+hw_params.yaml` mirrors this exact structure with real-flight values.
+
+**Future extension point (not implemented yet):** this one-file,
+one-section-per-mission shape is deliberately simple so that a planned
+operator app can later generate/edit this same YAML — pick a mission, adjust
+its parameters in a UI, then launch with
+`ros2 launch sim_bringup sim.launch.py params_file:=<generated path>` —
+without needing to redesign the config format itself.
 
 ### `common_control` (base class for every mission — `offboard_control_node`)
 
-| Parameter | Type | Default (sim) | Meaning |
-|---|---|---|---|
-| `takeoff_height_m` | float | `2.0` | NED climb target, meters above ground. |
-| `hover_seconds` | float | `5.0` | Hover dwell time for `action:=hover` (the plain flight-test). Ignored once a mission with waypoints is flying. |
-| `control_rate_hz` | float | `10.0` | Publish rate for the heartbeat + setpoint control loop. |
-| `waypoint_tolerance_m` | float | `0.5` (sim) / `0.7` (hw) | Arrival radius for both the takeoff-height check and mission waypoints. |
+| Parameter | Type | `sim_params.yaml` | `hw_params.yaml` | Meaning |
+|---|---|---|---|---|
+| `takeoff_height_m` | float | `2.0` | `1.5` | NED climb target, meters above ground. |
+| `hover_seconds` | float | `5.0` | `5.0` | Hover dwell time for `action:=hover` (the plain flight-test). Ignored once a mission with waypoints is flying. |
+| `control_rate_hz` | float | `10.0` | `10.0` | Publish rate for the heartbeat + setpoint control loop. |
+| `waypoint_tolerance_m` | float | `0.5` | `0.7` | Arrival radius for both the takeoff-height check and mission waypoints. |
+| `max_velocity_m_s` | float | `1.0` | `0.5` | Cruise speed cap toward any setpoint (takeoff, hover position, or a waypoint), in m/s. Without this, PX4's own offboard position controller accelerates toward every setpoint at its internal velocity limit — much faster than useful for watching a mission or a first real flight. Implemented as a feed-forward velocity vector aimed at the target, magnitude-capped at this value (`_capped_velocity_toward` in `offboard_control_node.py`) — not a PX4 firmware parameter. |
 
 ### `square_mission`
 
-| Parameter | Type | Default (sim) | Meaning |
-|---|---|---|---|
-| `side_length_m` | float | `4.0` (sim) / `2.0` (hw) | Side length of the square flight path, in meters. |
+| Parameter | Type | `sim_params.yaml` | `hw_params.yaml` | Meaning |
+|---|---|---|---|---|
+| `side_length_m` | float | `3.0` | `2.0` | Side length of the square flight path, in meters. |
 
 ### `survey_mission`
 
-| Parameter | Type | Default (sim) | Meaning |
-|---|---|---|---|
-| `area_length_m` | float | `8.0` (sim) / `4.0` (hw) | Length of each lawnmower lane (north axis), in meters. |
-| `area_width_m` | float | `6.0` (sim) / `3.0` (hw) | Total coverage width (east axis) the lanes step across, in meters. |
-| `lane_spacing_m` | float | `2.0` (sim) / `1.5` (hw) | Distance between adjacent lanes, in meters. |
+| Parameter | Type | `sim_params.yaml` | `hw_params.yaml` | Meaning |
+|---|---|---|---|---|
+| `area_length_m` | float | `5.0` | `4.0` | Length of each lawnmower lane (north axis), in meters. |
+| `area_width_m` | float | `5.0` | `3.0` | Total coverage width (east axis) the lanes step across, in meters. |
+| `lane_spacing_m` | float | `0.5` | `1.5` | Distance between adjacent lanes, in meters. |
 
 Override any of these ad hoc without touching the YAML, e.g. for a quick
-one-off test:
+one-off test (this satisfies the required-parameter check just like the YAML
+does):
 ```bash
 ros2 run common_missions square_mission --ros-args -p side_length_m:=6.0
 ```
+
+### What a missing parameter looks like
+
+Delete or misspell a value the launched node needs and startup fails loudly
+instead of silently flying a default:
+```
+[FATAL] [square_mission]: Required parameter 'side_length_m' was not
+provided to node 'square_mission'. Launch with a params_file that has a
+'square_mission:' section setting 'side_length_m' — see
+sim_bringup/config/sim_params.yaml — or pass '-p side_length_m:=<value>'
+directly.
+```
+followed by a Python traceback and a non-zero exit code — `ros2 launch`
+reports the node as crashed rather than continuing.
 
 ---
 
@@ -661,7 +755,11 @@ This repo is under active development.
   sim/real split (launch + params only, never flight logic — see §2 Rule),
   plus an opt-in Gazebo GUI (`make sim-gui`) to watch flights visually.
   `hw_bringup` ships as an untested stub (serial DDS agent + param file) —
-  real hardware wiring is still Phase 4.
+  real hardware wiring is still Phase 4. Every tuning value (takeoff height,
+  mission geometry, …) is a required parameter with no code-side default —
+  it must come from `sim_params.yaml`/`hw_params.yaml` (§7) or startup fails
+  loudly — and `make build-ws` is split from `make flight-test`/`make
+  mission` so editing that YAML never triggers a rebuild.
 - **Phase 3**: GPS-denied flight in sim — OpenVINS VIO fed by the simulated
   depth camera, fused into PX4 EKF2 with GPS disabled.
 - **Phase 4**: same code on real hardware — Orange Pi 5 Plus + Pixhawk 6 +
