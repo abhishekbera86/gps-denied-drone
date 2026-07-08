@@ -46,13 +46,13 @@ machine. All of it lives in containers.
         ┌────────▼─────────┐            ┌─────────▼──────────┐
         │   sim_bringup     │            │    hw_bringup       │
         │  dev host, x86_64 │            │  Orange Pi 5+, ARM64│
-        │  no GPU needed    │            │                     │
-        │                   │            │  Not built yet —    │
-        │  px4-sim:         │            │  see Roadmap        │
-        │   PX4 v1.17.0 SITL│            │                     │
-        │   + Gazebo Harmonic│           │                     │
-        │   headless        │            │                     │
-        │                   │            │                     │
+        │  GPU optional     │            │                     │
+        │  (GUI opt-in)     │            │  STUB — untested,   │
+        │  px4-sim:         │            │  no hardware yet.   │
+        │   PX4 v1.17.0 SITL│            │  Serial uXRCE-DDS   │
+        │   + Gazebo Harmonic│           │  agent + realsense/ │
+        │   headless or GUI │            │  perception slots — │
+        │                   │            │  see §8 Roadmap     │
         │  ros2-autonomy:   │            │                     │
         │   ROS 2 Humble +  │            │                     │
         │   uXRCE-DDS agent │            │                     │
@@ -77,7 +77,11 @@ active development.
 - **OS**: Ubuntu 22.04 LTS or any Linux distribution running Docker
 - **Architecture**: x86_64 for development/simulation; ARM64 (Orange Pi 5
   Plus) for real flight hardware
-- **Graphics**: none required — Gazebo Harmonic runs fully headless
+- **Graphics**: none required for `make sim` — Gazebo Harmonic runs fully
+  headless by default. For `make sim-gui` (watch the drone fly in the actual
+  Gazebo window) you need an X11 desktop session; any halfway-recent Intel
+  iGPU via Mesa is enough (verified on a ThinkPad W541's HD 4600) — no
+  dedicated/discrete GPU or proprietary driver required. See §4.
 - **RAM**: 8 GB+ recommended (PX4 SITL compiles ~1140 objects on first build)
 
 ### Install Docker
@@ -106,8 +110,10 @@ cd gps-denied-drone
 # Step 2 — build the two images (first time only)
 make build
 
-# Step 3 — start the simulation stack
+# Step 3 — start the simulation stack (headless — no GUI window)
 make sim
+#          ...or, to WATCH the drone fly in the actual Gazebo window:
+make sim-gui
 
 # Step 4 — wait ~30-60 s (PX4's EKF2 estimator must converge after boot),
 #          then fly the takeoff-hover-land test in a second terminal
@@ -132,14 +138,23 @@ take seconds):
   source at `v3.0.1`) + `px4_msgs` (`release/1.17`) / `px4_ros_com`
   (`release/1.16`), colcon-built against PX4 v1.17.0 message definitions.
 
-`make sim` starts both containers. The ros2-autonomy entrypoint auto-starts
-the Micro-XRCE-DDS-Agent, so the PX4 ↔ ROS 2 bridge comes up on its own —
-no manual step. Verify with `make logs`: you should see Gazebo Harmonic
-spawn `x500_depth_0` and `uxrce_dds_client` connect to `127.0.0.1:8888`.
+`make sim` starts both containers headless. `make sim-gui` starts the exact
+same stack but pops the real Gazebo Harmonic window on your desktop so you
+can watch the drone — see "Watching the drone fly" below. Either way, the
+ros2-autonomy entrypoint auto-starts the Micro-XRCE-DDS-Agent, so the PX4 ↔
+ROS 2 bridge comes up on its own — no manual step. Verify with `make logs`:
+you should see Gazebo Harmonic spawn `x500_depth_0` and `uxrce_dds_client`
+connect to `127.0.0.1:8888`.
 
-`make flight-test` colcon-builds the `common_control` package inside the
-container (source is live-mounted from `ros2_ws/src/` — edit on host, no
-image rebuild needed) and runs `offboard_control_node`, which:
+`make flight-test` and `make mission` both colcon-build the workspace inside
+the container (source is live-mounted from `ros2_ws/src/` — edit on host, no
+image rebuild needed) and launch through `sim_bringup`, the package that owns
+*how* the shared autonomy code runs against SITL (params, node selection) —
+the flight/mission logic itself lives in `common_control`/`common_missions`
+and never changes between sim and real hardware (see §2 Architecture).
+
+`make flight-test` runs `ros2 launch sim_bringup sim.launch.py action:=hover`,
+which:
 1. Streams the `OffboardControlMode` heartbeat + `TrajectorySetpoint` at 10 Hz
 2. Switches PX4 to offboard mode and arms (retrying once per second until
    PX4 confirms via `vehicle_status` — right after boot PX4 rejects arming
@@ -154,8 +169,8 @@ Expected output ends with:
 [INFO] [...]: Landed and disarmed — mission complete
 ```
 
-`make mission` runs a named waypoint mission from the `common_missions`
-package via `ros2 launch common_missions mission.launch.py mission:=<name>`:
+`make mission` runs `ros2 launch sim_bringup sim.launch.py action:=mission
+mission:=<name>`:
 - `square` (default) — 4 m square at takeoff height, nose pointed along each
   leg, landing back at the start.
 - `survey` — lawnmower coverage of an 8 m × 6 m rectangle with 2 m lane
@@ -165,7 +180,33 @@ Both are subclasses of `MissionBase`, which reuses the entire Phase 1
 arm/offboard/takeoff/land state machine and only supplies waypoints — a new
 mission is ~25 lines (declare geometry parameters, return a waypoint list).
 Waypoint arrival is judged by position tolerance (0.5 m default), never by
-elapsed time, so missions behave identically on slow and fast hosts.
+elapsed time, so missions behave identically on slow and fast hosts. Mission
+geometry and control tuning live in `sim_bringup/config/sim_params.yaml`, not
+hardcoded — retune without touching Python.
+
+### Watching the drone fly (Gazebo GUI)
+
+```bash
+make sim-gui       # instead of `make sim` — same stack, plus the real window
+# wait for the Gazebo Harmonic window: empty world, x500 drone on the ground
+make flight-test   # or make mission — watch it fly live
+```
+
+`make sim-gui` layers `docker-compose.gui.yml` on top of the base compose
+file: it forwards your X11 socket and `/dev/dri` into the `px4-sim`
+container and flips PX4's Gazebo launch from server-only to server+GUI. The
+world is `docker/px4_sitl_worlds/empty.sdf` — a bare ground plane, sun, and
+grid (an overlay file, not a fork of PX4; same mechanism as the SITL param
+override in §5 issue 4) — enough open space to watch takeoff and both
+missions without scenery getting in the way.
+
+If the window doesn't appear or Gazebo crashes on your GPU, force software
+rendering:
+```bash
+GZ_SW_RENDER=1 make sim-gui
+```
+`make sim` (no GUI) is unaffected either way — it's the same image, just a
+different compose overlay.
 
 ### Inspecting the running system
 
@@ -326,25 +367,42 @@ topic exists but is silent, and any control node waits forever with
 comments on their own lines, and the entrypoint now also trims whitespace
 from the port value as a safety net.
 
+**13. `HEADLESS=0` does NOT enable the Gazebo GUI — it must be unset.** PX4's
+`px4-rc.gzsim` init script decides whether to launch `gz sim -g` (the GUI
+client) with `if [ -z "${HEADLESS}" ]` — a check for "unset or empty", not
+"falsy". Setting `HEADLESS=0` still satisfies "set", so the GUI silently
+never starts and you just get the headless server with no error. Fixed in
+`docker/Dockerfile.px4_sim`'s `CMD`: it branches on `PX4_HEADLESS` and either
+`export HEADLESS=1` or `unset HEADLESS` before invoking `make px4_sitl
+gz_<model>` — never `HEADLESS=0`. `make sim-gui` sets `PX4_HEADLESS=0` (a
+compose env var, distinct from PX4's own `HEADLESS`) precisely so the CMD's
+branch can translate it into an *unset* `HEADLESS` for PX4.
+
 ---
 
 ## 6. Repository Layout
 
 ```
 docker/
-  Dockerfile.px4_sim              PX4 v1.17.0 SITL + Gazebo Harmonic (headless)
+  Dockerfile.px4_sim              PX4 v1.17.0 SITL + Gazebo Harmonic (headless default, GUI opt-in)
   Dockerfile.ros2_autonomy        ROS 2 Humble + uXRCE-DDS agent + px4_msgs/px4_ros_com
   entrypoint_ros2_autonomy.sh     Auto-starts the Micro-XRCE-DDS-Agent at container boot
   px4_sitl_overrides/             SITL-only PX4 param overrides (see §5, issue 4)
+  px4_sitl_worlds/                Overlay Gazebo worlds (empty.sdf — bare ground+sun+grid)
 docker-compose.yml                sim profile: px4-sim + ros2-autonomy (host networking)
-.env                              Version pins (PX4, px4_msgs/px4_ros_com, Gazebo model)
-Makefile                          build / sim / flight-test / mission / stop / shell / logs
+docker-compose.gui.yml            Opt-in overlay: X11/DRI passthrough for `make sim-gui`
+.env                              Version pins (PX4, px4_msgs/px4_ros_com, Gazebo model/world)
+Makefile                          build / sim / sim-gui / flight-test / mission / stop / shell
 ros2_ws/src/
   common_control/                 OffboardControlNode — heartbeat/arm/offboard/
                                    takeoff/waypoints/hover/land state machine (Phase 1 ✓)
-  common_missions/                MissionBase + square/survey missions, selected
-                                   via mission:= launch arg (Phase 2 ✓)
-  (common_perception, sim_bringup, hw_bringup — future phases)
+  common_missions/                MissionBase + square/survey missions + the shared,
+                                   transport-agnostic autonomy.launch.py (Phase 2 ✓)
+  sim_bringup/                    Sim-only launch + params (sim_params.yaml) — includes
+                                   autonomy.launch.py, no flight logic of its own (Phase 2.5 ✓)
+  hw_bringup/                     Real-hardware bringup STUB — serial uXRCE-DDS agent +
+                                   hw_params.yaml; untested, no hardware yet (Phase 4 seam)
+  (common_perception — Phase 3, not built yet)
 ```
 
 ---
@@ -355,7 +413,8 @@ ros2_ws/src/
 |---|---|
 | `make build` | Build `px4-sim` + `ros2-autonomy` images |
 | `make sim` | Start PX4 SITL (Gazebo Harmonic, headless) + the ROS 2 bridge container |
-| `make flight-test` | Build `common_control` in-container and fly takeoff → hover → land |
+| `make sim-gui` | Same, but with the real Gazebo GUI window (needs X11; see §4) |
+| `make flight-test` | Build the workspace and fly takeoff → hover → land (via `sim_bringup`) |
 | `make mission` | Fly a waypoint mission: `MISSION=square` (default) or `MISSION=survey` |
 | `make shell` | Bash inside `ros2-autonomy` |
 | `make shell-px4` | Bash inside `px4-sim` |
@@ -379,6 +438,11 @@ This repo is under active development.
 - **Phase 2 — complete**: pluggable missions (`common_missions`: square,
   survey, selected by name via `make mission MISSION=<name>`) on top of the
   Phase 1 control primitives.
+- **Phase 2.5 — complete**: `sim_bringup`/`hw_bringup` packages formalize the
+  sim/real split (launch + params only, never flight logic — see §2 Rule),
+  plus an opt-in Gazebo GUI (`make sim-gui`) to watch flights visually.
+  `hw_bringup` ships as an untested stub (serial DDS agent + param file) —
+  real hardware wiring is still Phase 4.
 - **Phase 3**: GPS-denied flight in sim — OpenVINS VIO fed by the simulated
   depth camera, fused into PX4 EKF2 with GPS disabled.
 - **Phase 4**: same code on real hardware — Orange Pi 5 Plus + Pixhawk 6 +

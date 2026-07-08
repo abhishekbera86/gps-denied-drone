@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>hw_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Real-hardware bringup (Phase 4 STUB — not yet flown): launch + connection
+    config for running the SAME common_control / common_missions autonomy on a
+    real Pixhawk 6 + Orange Pi 5 Plus, over a uXRCE-DDS serial link. Mirrors
+    sim_bringup; the only differences are the DDS transport (serial vs UDP),
+    the sensor source (RealSense vs simulated), and the params file — never the
+    flight logic. Untested until real hardware exists.
+  </description>
+  <maintainer email="a.bera.gcect@gmail.com">Abhishek Bera</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>common_control</exec_depend>
+  <exec_depend>common_missions</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

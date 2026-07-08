@@ -1,0 +1,22 @@
+# sim_params.yaml — simulation tuning for the shared autonomy nodes.
+#
+# The `/**` wildcard applies these to every node launched under this bringup;
+# each node picks up only the parameters it declares (extras are ignored). So
+# one file covers the hover node (offboard_control_node) and both mission
+# nodes (square_mission, survey_mission). hw_bringup has its own copy of this
+# file with real-flight values — that params split is the whole point.
+/**:
+  ros__parameters:
+    # ── common_control (offboard_control_node) ──────────────────────────────
+    takeoff_height_m: 2.0        # NED climb target (m above ground)
+    hover_seconds: 5.0           # hover dwell for the plain flight-test
+    control_rate_hz: 10.0        # setpoint/heartbeat publish rate
+    waypoint_tolerance_m: 0.5    # arrival radius for mission waypoints
+
+    # ── common_missions geometry ────────────────────────────────────────────
+    # square_mission
+    side_length_m: 4.0
+    # survey_mission
+    area_length_m: 8.0
+    area_width_m: 6.0
+    lane_spacing_m: 2.0

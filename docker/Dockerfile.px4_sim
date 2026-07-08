@@ -54,10 +54,26 @@ RUN chmod +x ROMFS/px4fmu_common/init.d-posix/airframes/4002_gz_x500_depth.post 
     && cp ROMFS/px4fmu_common/init.d-posix/airframes/4002_gz_x500_depth.post \
           build/px4_sitl_default/etc/init.d-posix/airframes/4002_gz_x500_depth.post
 
+# Repo-owned overlay world (bare ground+sun, grid on). Copied into PX4's
+# worlds dir so PX4_GZ_WORLD=empty resolves to it by name. Not a fork — same
+# overlay mechanism as the airframe .post above. The <world name="empty">
+# inside the file must match PX4_GZ_WORLD (gz_bridge keys /world/<name>/* on it).
+COPY docker/px4_sitl_worlds/empty.sdf \
+     Tools/simulation/gz/worlds/empty.sdf
+
+# Default to headless + the empty world. Both are overridable at runtime via
+# the PX4_HEADLESS / PX4_GZ_WORLD env vars (see docker-compose.gui.yml, which
+# sets PX4_HEADLESS=0 to pop the Gazebo GUI on the host desktop).
 ENV PX4_HEADLESS=1 \
+    PX4_GZ_WORLD=empty \
     PX4_SIM_SPEED_FACTOR=1.0
 
 EXPOSE 8888/udp 14550/udp 14540/udp
 
 WORKDIR /PX4-Autopilot
-CMD ["bash", "-c", "HEADLESS=1 make px4_sitl gz_${PX4_GZ_MODEL}"]
+# PX4's px4-rc.gzsim starts the Gazebo GUI only when HEADLESS is UNSET (it
+# tests `[ -z "$HEADLESS" ]`, so HEADLESS=0 still counts as headless). So we
+# must export HEADLESS=1 for headless and leave it unset for GUI — keyed off
+# PX4_HEADLESS (compose sets it: "1" base, "0" via docker-compose.gui.yml).
+# The world honors PX4_GZ_WORLD. Defaults preserve the verified headless run.
+CMD ["bash", "-c", "if [ \"${PX4_HEADLESS:-1}\" = \"1\" ]; then export HEADLESS=1; else unset HEADLESS; fi; PX4_GZ_WORLD=${PX4_GZ_WORLD:-empty} make px4_sitl gz_${PX4_GZ_MODEL}"]

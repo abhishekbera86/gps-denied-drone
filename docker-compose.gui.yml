@@ -1,0 +1,36 @@
+# =============================================================================
+# docker-compose.gui.yml — opt-in Gazebo GUI overlay for the px4-sim container
+# =============================================================================
+# The base docker-compose.yml runs Gazebo HEADLESS (fast, CI-friendly, no
+# display needed). Layer this file on top to instead pop the real Gazebo
+# Harmonic window on the host desktop so you can WATCH the drone fly:
+#
+#   make sim-gui                      # convenience wrapper (grants X + up)
+#   # equivalently:
+#   xhost +local:root
+#   docker compose -f docker-compose.yml -f docker-compose.gui.yml \
+#       --profile sim up -d
+#
+# Requires an X11 session on the host (DISPLAY set). Verified on a ThinkPad
+# W541: renders on the Intel HD 4600 iGPU via Mesa. If the window is black or
+# gz crashes on the GPU, force software rendering: `GZ_SW_RENDER=1 make sim-gui`
+# (llvmpipe — slower but always works).
+# =============================================================================
+
+services:
+  px4-sim:
+    environment:
+      # Override the base file's headless default — 0 launches the gz GUI.
+      PX4_HEADLESS: "0"
+      # Host X server + Qt/OpenGL knobs for GUI-in-Docker.
+      DISPLAY: "${DISPLAY:-:0}"
+      QT_X11_NO_MITSHM: "1"
+      # 0 = hardware GL (Intel iGPU). Set GZ_SW_RENDER=1 in the environment to
+      # fall back to software rendering (llvmpipe) on GPU trouble.
+      LIBGL_ALWAYS_SOFTWARE: "${GZ_SW_RENDER:-0}"
+    volumes:
+      # X11 unix socket (host networking + local socket = no TCP X needed).
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    devices:
+      # DRI render nodes so Mesa can use the GPUs (card1/renderD128 = Intel).
+      - /dev/dri:/dev/dri

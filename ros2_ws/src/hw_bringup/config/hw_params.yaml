@@ -1,0 +1,21 @@
+# hw_params.yaml — real-flight tuning for the shared autonomy nodes (Phase 4).
+#
+# Mirror of sim_bringup/config/sim_params.yaml with conservative first-flight
+# values. UNTESTED — starting points only; retune during the tethered hover
+# test (props off first). The `/**` wildcard applies to every node; each picks
+# up only the parameters it declares.
+/**:
+  ros__parameters:
+    # ── common_control (offboard_control_node) ──────────────────────────────
+    takeoff_height_m: 1.5        # lower first-flight climb than sim (2.0)
+    hover_seconds: 5.0
+    control_rate_hz: 10.0
+    waypoint_tolerance_m: 0.7    # looser arrival radius for real EKF/VIO drift
+
+    # ── common_missions geometry (smaller footprint for a real test area) ───
+    # square_mission
+    side_length_m: 2.0
+    # survey_mission
+    area_length_m: 4.0
+    area_width_m: 3.0
+    lane_spacing_m: 1.5
