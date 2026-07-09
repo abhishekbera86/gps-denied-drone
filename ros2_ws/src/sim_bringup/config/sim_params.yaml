@@ -31,6 +31,15 @@ offboard_control_node:
     control_rate_hz: 10.0        # setpoint/heartbeat publish rate
     waypoint_tolerance_m: 0.5    # arrival radius (also used for takeoff height)
     max_velocity_m_s: 1.0        # cruise speed cap toward any setpoint (m/s)
+    land_disarm_low_throttle_dwell_s: 3.0  # fallback disarm: sustained low-throttle needed
+    land_disarm_max_timeout_s: 60.0        # fallback disarm: give up (stay armed) past this
+    # Geofence — bounds auto-derived from this mission's own route (origin
+    # only, here), margins added on top. Added 2026-07-09 after a square-
+    # mission run flew out of the fenced/textured area at speed and hit the
+    # ground (VIO divergence outside the tracked area) — see
+    # DEVELOPMENT_STATUS.md. See offboard_control_node.py's `_geofence_bounds`.
+    geofence_margin_m: 2.0             # horizontal margin beyond the route's bounding box (m)
+    geofence_height_margin_m: 1.5      # max climb above the highest point the route visits (m)
 
 # ── square mission (make mission MISSION=square) ───────────────────────────
 square_mission:
@@ -39,17 +48,19 @@ square_mission:
     hover_seconds: 5.0           # unused once waypoints are flying; kept for parity
     control_rate_hz: 10.0
     waypoint_tolerance_m: 0.5
-    max_velocity_m_s: 1.0        # cruise speed cap toward any setpoint (m/s)
+    # 0.8, not the original 0.2 — raised 2026-07-09 as part of a VIO-
+    # divergence fix (DEVELOPMENT_STATUS.md "Milestone B result", part 7).
+    # 0.2 m/s meant a >90s flight with weak, near-constant-velocity IMU
+    # excitation the whole time — confirmed live via OpenVINS's own debug
+    # log that accelerometer bias was STILL actively growing at landing
+    # time (never converged) in a run that diverged, vs. already stable in
+    # an earlier successful run at 1.0 m/s. Monocular VIO scale/bias
+    # observability fundamentally needs real acceleration events; a slower
+    # cruise starves it of exactly that for longer. Still below the hover
+    # profile's 1.0 m/s as a margin for cornering at each waypoint.
+    max_velocity_m_s: 0.8
+    land_disarm_low_throttle_dwell_s: 3.0  # fallback disarm: sustained low-throttle needed
+    land_disarm_max_timeout_s: 60.0        # fallback disarm: give up (stay armed) past this
     side_length_m: 3.0           # square side length (m)
-
-# ── survey mission (make mission MISSION=survey) ───────────────────────────
-survey_mission:
-  ros__parameters:
-    takeoff_height_m: 2.0
-    hover_seconds: 5.0
-    control_rate_hz: 10.0
-    waypoint_tolerance_m: 0.5
-    max_velocity_m_s: 1.0        # cruise speed cap toward any setpoint (m/s)
-    area_length_m: 5.0           # lawnmower lane length, north axis (m)
-    area_width_m: 5.0            # coverage width, east axis (m)
-    lane_spacing_m: 0.5          # spacing between adjacent lanes (m)
+    geofence_margin_m: 2.0             # bounding box of the square's 4 corners, +2m each side
+    geofence_height_margin_m: 1.5      # max climb above takeoff_height_m (m)

@@ -16,10 +16,23 @@
 include .env
 export
 
-.PHONY: help build build-ws sim sim-gui flight-test mission stop shell shell-px4 logs ps clean clean-all
+.PHONY: help build build-ws sim sim-gui flight-test mission stop gz-resync shell shell-px4 logs ps clean clean-all
 
-# Mission flown by `make mission` — square or survey (see common_missions).
+# Mission flown by `make mission` — currently just square (see common_missions).
 MISSION ?= square
+
+# Localization source for `make mission`/`make flight-test` — gps (outdoor)
+# or vision (indoor VIO). See resource/phase3-gps-denied-localization-source.md.
+LOCALIZATION ?= gps
+
+# When LOCALIZATION=vision, which VIO backend feeds it — loopback (Milestone A
+# fake-VIO stand-in, no camera needed) or openvins (Milestone B real VIO).
+VIO_BACKEND ?= loopback
+
+# Gazebo world for `make sim`/`make sim-gui` — empty (default, bare ground) or
+# vio_test (colored props, needed for VIO_BACKEND=openvins to have anything to
+# track). See resource/phase3-gps-denied-localization-source.md.
+PX4_GZ_WORLD ?= empty
 
 help:
 	@echo ""
@@ -32,9 +45,15 @@ help:
 	@echo "  ╠══════════════════════════════════════════════╣"
 	@echo "  ║  DAILY WORKFLOW                              ║"
 	@echo "  ║    make sim         Start PX4 SITL + ROS 2    ║"
-	@echo "  ║    make sim-gui     Same, with Gazebo GUI     ║"
+	@echo "  ║      PX4_GZ_WORLD=empty|vio_test (default     ║"
+	@echo "  ║        empty; vio_test for VIO_BACKEND=openvins) ║"
+	@echo "  ║    make sim-gui     + Gazebo GUI + cam preview ║"
 	@echo "  ║    make flight-test Fly takeoff-hover-land    ║"
-	@echo "  ║    make mission     Fly MISSION=square|survey ║"
+	@echo "  ║    make mission     Fly MISSION=square         ║"
+	@echo "  ║      LOCALIZATION=gps|vision (default gps)    ║"
+	@echo "  ║      VIO_BACKEND=loopback|openvins            ║"
+	@echo "  ║    make gz-resync  Drone invisible in GUI? Run ║"
+	@echo "  ║                    this (see Makefile comment) ║"
 	@echo "  ║    make shell      Shell into ros2-autonomy   ║"
 	@echo "  ║    make shell-px4  Shell into px4-sim          ║"
 	@echo "  ║    make logs       Tail all container logs    ║"
@@ -62,16 +81,23 @@ sim:
 	@echo ""
 
 # Same as `make sim` but pops the Gazebo Harmonic GUI on the host desktop so
-# you can WATCH the drone fly. Layers docker-compose.gui.yml (HEADLESS=0 +
-# X11/DRI passthrough). Needs an X session (DISPLAY set). If the Gazebo window
-# is black or gz crashes on the GPU, retry with software rendering:
+# you can WATCH the drone fly, PLUS a live rqt_image_view window subscribed
+# to /camera/camera/color/image_raw from the start (see docker-compose.gui.
+# yml's header comment for why it starts now rather than being launched
+# manually per mission — a sequencing race with camera_imu_bridge). Layers
+# docker-compose.gui.yml (HEADLESS=0 + X11/DRI passthrough for both
+# windows). Needs an X session (DISPLAY set). If a window is black or gz
+# crashes on the GPU, retry with software rendering:
 #   GZ_SW_RENDER=1 make sim-gui
 sim-gui:
 	@echo "==> Starting px4-sim WITH Gazebo GUI (world=${PX4_GZ_WORLD}, DISPLAY=$${DISPLAY:-:0})..."
 	@xhost +local:root >/dev/null 2>&1 || echo "  ! xhost not available — GUI may be denied X access"
 	@docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile sim up -d
 	@echo ""
-	@echo "  ✓ Containers up. The Gazebo Harmonic window should open shortly."
+	@echo "  ✓ Containers up. The Gazebo Harmonic window and an rqt_image_view"
+	@echo "    camera preview should both open shortly (the camera preview stays"
+	@echo "    blank/black until a VIO mission — localization_source:=vision"
+	@echo "    vio_backend:=openvins — is actually flying and publishing)."
 	@echo "    (First boot takes ~20-40 s. Watch it:   make logs)"
 	@echo "    Then, in another terminal:   make flight-test   or   make mission"
 	@echo ""
@@ -86,7 +112,7 @@ sim-gui:
 # list* changes (setup.py's data_files, a new node, etc.), not for tuning
 # sim_params.yaml or editing a mission's Python.
 build-ws:
-	@echo "==> Building the ROS 2 workspace (common_control, common_missions, sim_bringup, hw_bringup)..."
+	@echo "==> Building the ROS 2 workspace (common_control, common_missions, common_perception, sim_bringup, hw_bringup)..."
 	@docker exec -it ros2-autonomy bash -c "\
 		source /opt/ros/humble/setup.bash && \
 		source /opt/px4_ros2_ws/install/setup.bash && \
@@ -109,10 +135,12 @@ flight-test:
 		echo '==> Running the offboard flight test (via sim_bringup)...'; \
 		source /opt/ros/humble/setup.bash && \
 		source /opt/px4_ros2_ws/install/setup.bash && \
+		source /opt/openvins_ws/install/setup.bash && \
 		source /ros2_ws_build/install/setup.bash && \
-		ros2 launch sim_bringup sim.launch.py action:=hover"
+		ros2 launch sim_bringup sim.launch.py action:=hover \
+			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND)"
 
-# Fly a named waypoint mission (Phase 2): make mission MISSION=square|survey.
+# Fly a named waypoint mission (Phase 2): make mission MISSION=square.
 # Through the sim_bringup entry point; the mission takes off, flies its
 # waypoint sequence, returns and lands. To retune geometry (side_length_m,
 # area_length_m, ...), edit sim_bringup/config/sim_params.yaml and re-run
@@ -120,19 +148,44 @@ flight-test:
 mission:
 	@docker exec -it ros2-autonomy bash -c "\
 		test -f /ros2_ws_build/install/setup.bash || { echo 'Workspace not built yet — run: make build-ws'; exit 1; }; \
-		echo \"==> Flying the '$(MISSION)' mission (via sim_bringup)...\"; \
+		echo \"==> Flying the '$(MISSION)' mission, localization=$(LOCALIZATION) (via sim_bringup)...\"; \
 		source /opt/ros/humble/setup.bash && \
 		source /opt/px4_ros2_ws/install/setup.bash && \
+		source /opt/openvins_ws/install/setup.bash && \
 		source /ros2_ws_build/install/setup.bash && \
-		ros2 launch sim_bringup sim.launch.py action:=mission mission:=$(MISSION)"
+		ros2 launch sim_bringup sim.launch.py action:=mission mission:=$(MISSION) \
+			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND)"
 
 stop:
-	@docker compose --profile sim down
+	@docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile sim down --remove-orphans
 	@echo "  ✓ All containers stopped."
 
 # =============================================================================
 # DEBUGGING
 # =============================================================================
+# Fix for "the drone doesn't appear in the Gazebo GUI window" — the
+# world/props render, but the vehicle (spawned dynamically by PX4 AFTER the
+# world/GUI are up, not defined in the world file itself) doesn't, and it's
+# missing from the GUI's entity tree too even though the sim is flying it
+# correctly (verify with: gz service -s /world/<w>/scene/info — the vehicle
+# is fully there server-side). Cause: under heavy boot load (low real-time
+# factor), the GUI client's initial scene sync can time out AND miss the
+# later entity-spawn notification; once desynced it never catches up on its
+# own. A `gz service .../scene/info` call does NOT fix it — the response
+# goes to the service CALLER, not the GUI (tried; confirmed ineffective).
+# What works: restart just the GUI client — it reconnects and downloads the
+# complete scene fresh. The sim server, PX4, and any in-progress flight are
+# completely unaffected (the GUI is a pure viewer). The relaunch must
+# re-export GZ_SIM_RESOURCE_PATH (mesh model:// resolution) and GZ_IP —
+# those live in PX4's launch-script session, not the container's top-level
+# env that `docker exec` inherits.
+gz-resync:
+	@echo "==> Restarting the Gazebo GUI client (sim server keeps running — flight unaffected)..."
+	-@docker exec px4-sim pkill -f "gz sim -g" 2>/dev/null || true
+	@sleep 2
+	@docker exec -d px4-sim bash -c "export GZ_SIM_RESOURCE_PATH=/PX4-Autopilot/Tools/simulation/gz/models:/PX4-Autopilot/Tools/simulation/gz/worlds GZ_IP=127.0.0.1 QT_X11_NO_MITSHM=1; gz sim -g > /tmp/gz_gui_relaunch.log 2>&1"
+	@echo "  ✓ GUI relaunched — a fresh window opens in ~5-20 s with the full scene, drone included."
+
 shell:
 	docker exec -it ros2-autonomy bash
 

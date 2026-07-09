@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>common_perception</name>
+  <version>0.1.0</version>
+  <description>
+    Localization-source selection (GPS vs vision) and the VIO odometry
+    pipeline that feeds PX4's EKF2 external-vision fusion. Sensor-agnostic:
+    common_control/common_missions never know which source is active.
+    Identical in sim and on real hardware.
+  </description>
+  <maintainer email="a.bera.gcect@gmail.com">Abhishek Bera</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>px4_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <exec_depend>ros2launch</exec_depend>
+
+  <!-- ov_msckf (OpenVINS) and ros_gz_bridge are Milestone B run-time deps,
+       built/installed into separate underlay workspaces in the Docker image
+       (/opt/openvins_ws, apt) rather than colcon-built here — same pattern
+       as px4_msgs living in /opt/px4_ros2_ws. Not declared as package.xml
+       depends since they're image-provided, not resolved by our build. -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

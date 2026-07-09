@@ -1,0 +1,1271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  vio_test.sdf — textured/prop-scattered world for Phase 3 Milestone B
+  (real OpenVINS monocular VIO) development and testing.
+
+  Same repo-owned overlay mechanism as empty.sdf (copied into PX4's
+  Tools/simulation/gz/worlds/ at Docker build time — never a fork of
+  upstream). Select it at runtime with PX4_GZ_WORLD=vio_test (see
+  resource/phase3-gps-denied-localization-source.md, "Milestone B
+  implementation findings").
+
+  WHY THIS WORLD EXISTS: monocular VIO (OpenVINS) needs corner features to
+  track — confirmed live that empty.sdf's flat, untextured 500x500 gray
+  ground plane gives the feature tracker zero usable corners, so
+  OpenVINS's initializer fails every single frame
+  ("[init]: failed initialization in 0.0000 seconds", instantly, forever —
+  not a slow convergence, a hard block). This world adds a rectangular
+  "fence" of static, brightly-colored boxes around the mission bounding
+  box (see the props' own comment below for exact placement/why), sized to
+  stay within the front-facing D435i's view as the vehicle flies the
+  existing square_mission (3m side) / survey_mission (5x5m area) paths at
+  their 2m takeoff/cruise altitude. GPS/mission missions are unaffected by
+  this world (props are outside the flight paths, not obstacles on them).
+
+  IMPORTANT: the <world name="..."> below MUST equal the PX4_GZ_WORLD value
+  ("vio_test"). PX4's gz_bridge builds every Gazebo topic as
+  /world/<world_name>/... — a name mismatch means the bridge subscribes to
+  the wrong topics and no sim data flows.
+
+  Physics/scene/light/spherical_coordinates are identical to empty.sdf —
+  only the added prop models differ.
+-->
+<sdf version="1.9">
+  <world name="vio_test">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>true</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>500 500</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <pose>0 0 0 0 -0 0</pose>
+      <self_collide>false</self_collide>
+    </model>
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg> 8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <!-- Feature-rich static props: a rectangular "fence" of colored boxes
+         around the mission bounding box. Missions fly strictly within
+         x in [0, area_length_m], y in [0, area_width_m] (survey_mission's
+         largest footprint: 5x5m; square_mission: 3x3m - see
+         sim_params.yaml) - confirmed from square_mission.py/survey_mission.py
+         waypoint generation, both start at the origin and stay in the
+         first quadrant. The fence sits >=1.5m outside a 6.5x6.5m cover box
+         (never a collision hazard) with props spaced ~1.1m apart so the
+         front-facing camera's ~69 deg horizontal FOV reliably has several
+         in view on every leg, at any heading. Heights/sizes/colors vary
+         for maximum FAST-corner richness. Earlier attempt (a sparse 12-box
+         ring at 4-8m radius) left most of the frame's 5x5 detection grid
+         cells empty, and OpenVINS's KLT tracker found only ~5 corners total
+         and RANSAC rejected them on the very next frame ("Failed to get
+         enough points to do RANSAC, resetting....."), so the feature
+         database stayed empty and initialization failed every frame. See
+         resource/phase3-gps-denied-localization-source.md. -->
+    <model name="vio_fence_000">
+      <static>true</static>
+      <pose>-1.500 -1.500 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_001">
+      <static>true</static>
+      <pose>-0.444 -1.500 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
+          <material><ambient>0.1 0.9 0.1 1</ambient><diffuse>0.1 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_002">
+      <static>true</static>
+      <pose>0.611 -1.500 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
+          <material><ambient>0.1 0.1 0.9 1</ambient><diffuse>0.1 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_003">
+      <static>true</static>
+      <pose>1.667 -1.500 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.9 0.9 0.1 1</ambient><diffuse>0.9 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_004">
+      <static>true</static>
+      <pose>2.722 -1.500 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
+          <material><ambient>0.9 0.1 0.9 1</ambient><diffuse>0.9 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_005">
+      <static>true</static>
+      <pose>3.778 -1.500 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 0.7</size></box></geometry>
+          <material><ambient>0.1 0.9 0.9 1</ambient><diffuse>0.1 0.9 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_006">
+      <static>true</static>
+      <pose>4.833 -1.500 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.15</size></box></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.9 0.5 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_007">
+      <static>true</static>
+      <pose>5.889 -1.500 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.6</size></box></geometry>
+          <material><ambient>0.5 0.1 0.9 1</ambient><diffuse>0.5 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_008">
+      <static>true</static>
+      <pose>6.944 -1.500 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_009">
+      <static>true</static>
+      <pose>8.000 -1.500 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.375</size></box></geometry>
+          <material><ambient>0.1 0.9 0.1 1</ambient><diffuse>0.1 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_010">
+      <static>true</static>
+      <pose>-1.500 8.000 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
+          <material><ambient>0.1 0.1 0.9 1</ambient><diffuse>0.1 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_011">
+      <static>true</static>
+      <pose>-0.444 8.000 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.15</size></box></geometry>
+          <material><ambient>0.9 0.9 0.1 1</ambient><diffuse>0.9 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_012">
+      <static>true</static>
+      <pose>0.611 8.000 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.6</size></box></geometry>
+          <material><ambient>0.9 0.1 0.9 1</ambient><diffuse>0.9 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_013">
+      <static>true</static>
+      <pose>1.667 8.000 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.1 0.9 0.9 1</ambient><diffuse>0.1 0.9 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_014">
+      <static>true</static>
+      <pose>2.722 8.000 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.375</size></box></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.9 0.5 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_015">
+      <static>true</static>
+      <pose>3.778 8.000 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
+          <material><ambient>0.5 0.1 0.9 1</ambient><diffuse>0.5 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_016">
+      <static>true</static>
+      <pose>4.833 8.000 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_017">
+      <static>true</static>
+      <pose>5.889 8.000 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
+          <material><ambient>0.1 0.9 0.1 1</ambient><diffuse>0.1 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_018">
+      <static>true</static>
+      <pose>6.944 8.000 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.1 0.1 0.9 1</ambient><diffuse>0.1 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_019">
+      <static>true</static>
+      <pose>8.000 8.000 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
+          <material><ambient>0.9 0.9 0.1 1</ambient><diffuse>0.9 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_020">
+      <static>true</static>
+      <pose>-1.500 -0.444 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.9 0.5 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_021">
+      <static>true</static>
+      <pose>-1.500 0.611 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.5 0.1 0.9 1</ambient><diffuse>0.5 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_022">
+      <static>true</static>
+      <pose>-1.500 1.667 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.15</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_023">
+      <static>true</static>
+      <pose>-1.500 2.722 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
+          <material><ambient>0.1 0.9 0.1 1</ambient><diffuse>0.1 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_024">
+      <static>true</static>
+      <pose>-1.500 3.778 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.6</size></box></geometry>
+          <material><ambient>0.1 0.1 0.9 1</ambient><diffuse>0.1 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_025">
+      <static>true</static>
+      <pose>-1.500 4.833 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 0.7</size></box></geometry>
+          <material><ambient>0.9 0.9 0.1 1</ambient><diffuse>0.9 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_026">
+      <static>true</static>
+      <pose>-1.500 5.889 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.9 0.1 0.9 1</ambient><diffuse>0.9 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_027">
+      <static>true</static>
+      <pose>-1.500 6.944 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.15</size></box></geometry>
+          <material><ambient>0.1 0.9 0.9 1</ambient><diffuse>0.1 0.9 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_028">
+      <static>true</static>
+      <pose>8.000 -0.444 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.375</size></box></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.9 0.5 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_029">
+      <static>true</static>
+      <pose>8.000 0.611 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.6</size></box></geometry>
+          <material><ambient>0.5 0.1 0.9 1</ambient><diffuse>0.5 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_030">
+      <static>true</static>
+      <pose>8.000 1.667 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_031">
+      <static>true</static>
+      <pose>8.000 2.722 0.462 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 0.9249999999999999</size></box></geometry>
+          <material><ambient>0.1 0.9 0.1 1</ambient><diffuse>0.1 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 0.9249999999999999</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_032">
+      <static>true</static>
+      <pose>8.000 3.778 0.575 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
+          <material><ambient>0.1 0.1 0.9 1</ambient><diffuse>0.1 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_033">
+      <static>true</static>
+      <pose>8.000 4.833 0.688 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.375</size></box></geometry>
+          <material><ambient>0.9 0.9 0.1 1</ambient><diffuse>0.9 0.9 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.375</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_034">
+      <static>true</static>
+      <pose>8.000 5.889 0.800 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
+          <material><ambient>0.9 0.1 0.9 1</ambient><diffuse>0.9 0.1 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="vio_fence_035">
+      <static>true</static>
+      <pose>8.000 6.944 0.350 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
+          <material><ambient>0.1 0.9 0.9 1</ambient><diffuse>0.1 0.9 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <!-- Ground-level checkerboard tiles (Phase 3 Milestone B landing-
+         divergence fix, 2026-07-09) — root-caused a real AUTO_LAND flyaway
+         to visual feature starvation near the ground: the fence props
+         above are TALL (0.7-1.6m), and at low altitude near the landing
+         point their tops exit the D435i's 42 deg vertical FOV, leaving
+         only this world's flat, uniform-gray ground_plane in view — zero
+         texture gradient, zero KLT corners, so OpenVINS loses all feature
+         tracks exactly during descent/touchdown and falls back to
+         unconstrained IMU dead-reckoning. Real ground surfaces (grass,
+         asphalt, carpet) always have texture; this uniform gray plane did
+         not. These are thin (1cm), ground-level, alternating light/dark
+         1x1m boxes (NOT a Gazebo material/texture asset — same technique
+         as the fence props above, guaranteed to render with no missing-
+         asset risk) covering an 8x8m grid under the whole mission
+         footprint and landing point, so the tracker has real ground-level
+         corners in view at any altitude, including touchdown. See
+         DEVELOPMENT_STATUS.md "Milestone B result, part 7" for the full
+         incident this was root-caused from. -->
+    <model name="vio_floor_tile_000">
+      <static>true</static>
+      <pose>-1.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_001">
+      <static>true</static>
+      <pose>-1.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_002">
+      <static>true</static>
+      <pose>-1.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_003">
+      <static>true</static>
+      <pose>-1.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_004">
+      <static>true</static>
+      <pose>-1.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_005">
+      <static>true</static>
+      <pose>-1.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_006">
+      <static>true</static>
+      <pose>-1.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_007">
+      <static>true</static>
+      <pose>-1.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_008">
+      <static>true</static>
+      <pose>-0.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_009">
+      <static>true</static>
+      <pose>-0.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_010">
+      <static>true</static>
+      <pose>-0.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_011">
+      <static>true</static>
+      <pose>-0.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_012">
+      <static>true</static>
+      <pose>-0.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_013">
+      <static>true</static>
+      <pose>-0.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_014">
+      <static>true</static>
+      <pose>-0.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_015">
+      <static>true</static>
+      <pose>-0.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_016">
+      <static>true</static>
+      <pose>0.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_017">
+      <static>true</static>
+      <pose>0.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_018">
+      <static>true</static>
+      <pose>0.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_019">
+      <static>true</static>
+      <pose>0.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_020">
+      <static>true</static>
+      <pose>0.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_021">
+      <static>true</static>
+      <pose>0.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_022">
+      <static>true</static>
+      <pose>0.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_023">
+      <static>true</static>
+      <pose>0.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_024">
+      <static>true</static>
+      <pose>1.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_025">
+      <static>true</static>
+      <pose>1.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_026">
+      <static>true</static>
+      <pose>1.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_027">
+      <static>true</static>
+      <pose>1.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_028">
+      <static>true</static>
+      <pose>1.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_029">
+      <static>true</static>
+      <pose>1.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_030">
+      <static>true</static>
+      <pose>1.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_031">
+      <static>true</static>
+      <pose>1.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_032">
+      <static>true</static>
+      <pose>2.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_033">
+      <static>true</static>
+      <pose>2.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_034">
+      <static>true</static>
+      <pose>2.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_035">
+      <static>true</static>
+      <pose>2.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_036">
+      <static>true</static>
+      <pose>2.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_037">
+      <static>true</static>
+      <pose>2.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_038">
+      <static>true</static>
+      <pose>2.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_039">
+      <static>true</static>
+      <pose>2.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_040">
+      <static>true</static>
+      <pose>3.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_041">
+      <static>true</static>
+      <pose>3.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_042">
+      <static>true</static>
+      <pose>3.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_043">
+      <static>true</static>
+      <pose>3.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_044">
+      <static>true</static>
+      <pose>3.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_045">
+      <static>true</static>
+      <pose>3.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_046">
+      <static>true</static>
+      <pose>3.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_047">
+      <static>true</static>
+      <pose>3.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_048">
+      <static>true</static>
+      <pose>4.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_049">
+      <static>true</static>
+      <pose>4.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_050">
+      <static>true</static>
+      <pose>4.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_051">
+      <static>true</static>
+      <pose>4.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_052">
+      <static>true</static>
+      <pose>4.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_053">
+      <static>true</static>
+      <pose>4.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_054">
+      <static>true</static>
+      <pose>4.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_055">
+      <static>true</static>
+      <pose>4.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_056">
+      <static>true</static>
+      <pose>5.500 -1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_057">
+      <static>true</static>
+      <pose>5.500 -0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_058">
+      <static>true</static>
+      <pose>5.500 0.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_059">
+      <static>true</static>
+      <pose>5.500 1.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_060">
+      <static>true</static>
+      <pose>5.500 2.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_061">
+      <static>true</static>
+      <pose>5.500 3.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_062">
+      <static>true</static>
+      <pose>5.500 4.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="vio_floor_tile_063">
+      <static>true</static>
+      <pose>5.500 5.500 0.005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

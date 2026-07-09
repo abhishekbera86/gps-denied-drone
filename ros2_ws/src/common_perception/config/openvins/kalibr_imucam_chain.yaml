@@ -1,0 +1,71 @@
+%YAML:1.0
+#
+# kalibr_imucam_chain.yaml — camera intrinsics/extrinsics for the d435i sim
+# model's bridged color camera (see ../ros_gz_bridge.yaml and
+# docker/px4_sitl_models/d435i/model.sdf).
+#
+# Intrinsics DERIVED (not guessed) from the sensor's actual declared SDF
+# parameters (docker/px4_sitl_models/d435i/model.sdf):
+#   horizontal_fov=1.204 rad, resolution=1280x720
+#   fx = fy = width / (2*tan(hfov/2)) = 931.5  (Gazebo's simple pinhole
+#     camera assumes square pixels / fx=fy — the real camera_info topic
+#     once ros_gz_bridge is live is the ultimate source of truth; recheck
+#     against it during Milestone B tuning)
+#   cx, cy = width/2, height/2 = 640, 360
+#   distortion: none — Gazebo's basic camera model has no lens distortion.
+#
+# Extrinsics (T_cam_imu):
+#   TRANSLATION is zero — the d435i model deliberately co-locates its `imu`
+#   sensor with the `color` sensor (same pose in camera_link), so there is
+#   no physical offset to derive (see model.sdf's IMU comment for why).
+#
+#   ROTATION is NOT identity, and getting this wrong was a confirmed,
+#   reproduced bug in an earlier version of this file (see
+#   DEVELOPMENT_STATUS.md, "Phase 3 Milestone B result" — a stationary
+#   hover test with identity rotation diverged linearly and had to be
+#   force-disarmed). The camera-optical-vs-body-FLU reasoning that motivated
+#   a rotation at all is still correct (a camera sensor's SDF <pose> is
+#   declared in the link's own FLU-like body convention, but the actual
+#   pixel-projection frame OpenVINS's pinhole model assumes is always
+#   +Z-forward/+X-right/+Y-down — those are different frames regardless of
+#   translation, for any forward-facing camera at SDF rpy=0,0,0).
+#
+#   BUT the first fix attempt had the rotation BACKWARDS — a real,
+#   EMPIRICALLY CAUGHT second bug, not a hypothetical: with
+#   `calib_cam_extrinsics: true` (below) live-refining extrinsics in
+#   flight, a `square` mission's OpenVINS debug log showed the estimator
+#   immediately converging to, and holding rock-stable for the ENTIRE
+#   flight (261+ identical log lines), a `cam0 extrinsics` quaternion of
+#   `(-0.5, 0.5, -0.5, 0.5)` — which decodes to EXACTLY the transpose of the
+#   matrix originally hand-derived and seeded here. Waypoint navigation flew
+#   accurately on this self-corrected value (online calibration papering
+#   over the wrong seed), but the mission's fast AUTO_LAND descent —
+#   `vertical_movement/horizontal_movement/rotational_movement` all `True`
+#   simultaneously — pushed the estimator into a genuine divergence
+#   (position ran to `x=11.4, y=-10.8, z=4.97` before a forced disarm),
+#   most likely the online calibrator's correction lagging under aggressive
+#   combined dynamics rather than the smooth, mostly-planar waypoint cruise.
+#   Fixed by seeding the ALREADY-CONVERGED, empirically-confirmed value
+#   directly (the transpose of the original derivation) instead of relying
+#   on in-flight correction to find it:
+#     R_cam_imu = [[0,0,1],[-1,0,0],[0,-1,0]]
+#   and freezing it (`calib_cam_extrinsics: false`) now that it's known —
+#   no reason to let a flight controller re-learn its camera-IMU extrinsic
+#   under load when it's already known good; this also removes the whole
+#   "correction lags under aggressive dynamics" failure class outright,
+#   not just this one instance of it.
+
+cam0:
+  T_cam_imu:
+    - [0.0, 0.0, 1.0, 0.0]
+    - [-1.0, 0.0, 0.0, 0.0]
+    - [0.0, -1.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+  cam_overlaps: []
+  camera_model: pinhole
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  distortion_model: radtan
+  intrinsics: [931.5, 931.5, 640.0, 360.0]
+  resolution: [1280, 720]
+  rostopic: /camera/camera/color/image_raw
+  timeshift_cam_imu: 0.0

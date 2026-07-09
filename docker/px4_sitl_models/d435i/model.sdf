@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <!--
+    d435i — Intel RealSense D435i sensor pack, our own local Gazebo model.
+    NOT part of the upstream PX4-Autopilot repo — copied into the built
+    image at Tools/simulation/gz/models/d435i by Dockerfile.px4_sim, same
+    overlay pattern already used for docker/px4_sitl_worlds/*.sdf. Never
+    edit the PX4-Autopilot checkout directly; edit this file and rebuild.
+
+    Replaces the stock x500_depth model's OakD-Lite camera (see
+    ../x500_d435i_depth/model.sdf) so the simulated sensor is the SAME
+    physical camera (D435i) the real hardware bring-up (Phase 4,
+    hw_bringup) uses via realsense-ros — sim and real now share one camera
+    identity instead of two different cameras with matched topic names
+    pretending to be the same thing.
+
+    Visual/collision geometry is a plain box sized to the D435i's real
+    housing dimensions (90 x 25 x 25 mm) — no attempt at a faithful mesh;
+    flight dynamics only care about mass/inertia, and headless SITL doesn't
+    render it anyway. Sensor FOVs below are Intel's published D435i
+    datasheet figures (69x42 deg color, ~87x58 deg depth); IMU noise reuses
+    x500_base's own imu_sensor noise stddevs as a stand-in "small MEMS IMU"
+    figure, NOT a real D435i/BMI055 datasheet value — retune against a real
+    unit during Phase 4 hardware bring-up.
+  -->
+  <model name='d435i'>
+    <pose>0 0 0 0 0 0</pose>
+    <self_collide>false</self_collide>
+    <static>false</static>
+    <link name="camera_link">
+      <inertial>
+        <mass>0.072</mass>
+        <inertia>
+          <ixx>0.0000524</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0000075</iyy>
+          <iyz>0</iyz>
+          <izz>0.0000524</izz>
+        </inertia>
+      </inertial>
+      <visual name="d435i/visual">
+        <geometry>
+          <box>
+            <size>0.025 0.090 0.025</size>
+          </box>
+        </geometry>
+      </visual>
+      <collision name="d435i/collision">
+        <geometry>
+          <box>
+            <size>0.025 0.090 0.025</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <!-- Color (RGB) sensor. D435i datasheet: 69x42 deg (H x V) FOV,
+           1920x1080 max — 1280x720 used here (realsense-ros's common
+           default color resolution for this camera). -->
+      <sensor name="color" type="camera">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <pose>0 0 0 0 0 0</pose>
+        <camera>
+          <horizontal_fov>1.204</horizontal_fov>
+          <image>
+            <width>1280</width>
+            <height>720</height>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>100</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+        <visualize>true</visualize>
+      </sensor>
+
+      <!-- Depth sensor (active stereo IR). D435 datasheet: ~87x58 deg
+           (H x V) FOV, ~0.2-10 m range — 848x480 used here (realsense-ros's
+           common default depth resolution for this camera). Not consumed
+           by OpenVINS's mono pipeline; bridged for topic-name parity with
+           real hardware and future Nav2/obstacle-avoidance use. -->
+      <sensor name="depth" type="depth_camera">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <pose>0 0 0 0 0 0</pose>
+        <camera>
+          <horizontal_fov>1.518</horizontal_fov>
+          <image>
+            <width>848</width>
+            <height>480</height>
+            <format>R_FLOAT32</format>
+          </image>
+          <clip>
+            <near>0.2</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+        <visualize>true</visualize>
+        <topic>depth_camera</topic>
+      </sensor>
+
+      <!-- IMU. D435i's onboard IMU is a Bosch BMI055 (per Intel's D435i
+           datasheet) — deliberately modeled here (unlike the stock
+           OakD-Lite model's "camera_imu" sensor name, which has ZERO
+           publishers, a dangling non-source) so the bridged
+           /camera/camera/imu topic is real camera-mounted data in sim too,
+           matching what realsense-ros actually publishes on real hardware.
+           Co-located with the color sensor at the same pose (0,0,0) — the
+           real device's factory color-to-IMU offset is a few mm, negligible
+           next to the EKF2/OpenVINS noise floor, so T_cam_imu's translation
+           in the OpenVINS config is simply zero. update_rate=200 matches
+           realsense-ros's common combined accel+gyro rate for this camera. -->
+      <sensor name="imu" type="imu">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <pose>0 0 0 0 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>200</update_rate>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.0008726646</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.0008726646</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.0008726646</stddev></noise></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.00637</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.00637</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.00637</stddev></noise></z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+
+      <gravity>true</gravity>
+      <velocity_decay />
+    </link>
+  </model>
+</sdf>

@@ -23,6 +23,7 @@ yaw in degrees); `waypoint()` converts to the NED tuple common_control flies.
 """
 
 import math
+import os
 
 import rclpy
 
@@ -74,3 +75,11 @@ def run_mission(mission_class) -> None:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+    # See offboard_control_node.py's main() for why this is here: the OS
+    # process can otherwise outlive rclpy.shutdown() (non-daemon
+    # rmw_cyclonedds_cpp threads), which silently defeats
+    # autonomy.launch.py's on_exit=Shutdown() and leaves the VIO/bridge
+    # nodes running unsupervised after "mission complete" — confirmed live
+    # to let OpenVINS's own estimate run away 100+ m within minutes.
+    os._exit(0)

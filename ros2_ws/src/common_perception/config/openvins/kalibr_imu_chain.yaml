@@ -1,0 +1,64 @@
+%YAML:1.0
+#
+# kalibr_imu_chain.yaml — IMU noise/topic config for the d435i sim model's
+# own onboard IMU (bridged to /camera/camera/imu — see ../ros_gz_bridge.yaml
+# and docker/px4_sitl_models/d435i/model.sdf). This is now the CAMERA's own
+# IMU (co-located with the color sensor), matching what real hardware's
+# realsense-ros actually publishes on /camera/camera/imu — not a stand-in
+# for the flight controller's IMU as in an earlier version of this config.
+#
+# Noise DENSITY values are DERIVED (not guessed) from the actual Gazebo IMU
+# sensor's declared per-sample gaussian noise stddev in
+# docker/px4_sitl_models/d435i/model.sdf, converted via density ≈
+# stddev / sqrt(update_rate) (update_rate=200 Hz, this sensor's own rate —
+# NOT the flight controller imu_sensor's 250 Hz from the earlier version):
+#   gyroscope_noise_density:     0.0008726646 / sqrt(200) = 0.0000617
+#   accelerometer_noise_density: 0.00637      / sqrt(200) = 0.0004504
+# (The underlying stddevs themselves are reused from x500_base's flight-
+# controller IMU as a stand-in "small MEMS IMU" figure, not a real D435i/
+# BMI055 datasheet value — see model.sdf's IMU comment.)
+# Random-walk (bias instability) values are NOT modeled by Gazebo's simple
+# IMU sensor — these are approximated from rs_d455's proportions (random
+# walk roughly 1/5 of noise density there) as a starting point, not
+# measured. Expect to retune during Milestone B flight testing.
+#
+# T_i_b is identity — the IMU sensor's declared SDF pose IS body/camera_link
+# frame (no separate "IMU chip axes" rotation modeled; Gazebo's IMU sensor
+# reports directly in its parent link's frame, unlike a camera's optical
+# projection frame — see kalibr_imucam_chain.yaml's T_cam_imu comment for
+# why a camera needs a rotation here and an IMU does not).
+
+imu0:
+  T_i_b:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+  accelerometer_noise_density: 0.00045044
+  accelerometer_random_walk: 0.00009009    # approximated — see header note
+  gyroscope_noise_density: 0.00006171
+  gyroscope_random_walk: 0.00001234        # approximated — see header note
+  rostopic: /camera/camera/imu
+  time_offset: 0.0
+  update_rate: 200
+  model: "kalibr"
+  Tw:
+    - [ 1.0, 0.0, 0.0 ]
+    - [ 0.0, 1.0, 0.0 ]
+    - [ 0.0, 0.0, 1.0 ]
+  R_IMUtoGYRO:
+    - [ 1.0, 0.0, 0.0 ]
+    - [ 0.0, 1.0, 0.0 ]
+    - [ 0.0, 0.0, 1.0 ]
+  Ta:
+    - [ 1.0, 0.0, 0.0 ]
+    - [ 0.0, 1.0, 0.0 ]
+    - [ 0.0, 0.0, 1.0 ]
+  R_IMUtoACC:
+    - [ 1.0, 0.0, 0.0 ]
+    - [ 0.0, 1.0, 0.0 ]
+    - [ 0.0, 0.0, 1.0 ]
+  Tg:
+    - [ 0.0, 0.0, 0.0 ]
+    - [ 0.0, 0.0, 0.0 ]
+    - [ 0.0, 0.0, 0.0 ]

@@ -51,8 +51,75 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
+# pymavlink — Phase 3's localization-source switch (common_perception's
+# set_localization_source) talks to PX4 over a MAVLink side-channel, since
+# the uXRCE-DDS bridge used everywhere else in this stack cannot set PX4
+# parameters in this pinned version. See
+# resource/phase3-gps-denied-localization-source.md.
+RUN pip3 install --no-cache-dir pymavlink
+
+# ── ros_gz_bridge, matched to Gazebo HARMONIC (Phase 3 Milestone B) ────────
+# Humble's DEFAULT `ros-humble-ros-gz-bridge` (from packages.ros.org) links
+# against ignition-transport11 — Gazebo FORTRESS, a different, incompatible
+# wire protocol from the gz-transport13 (Harmonic) that px4-sim's Gazebo
+# actually speaks (confirmed by inspecting both packages' apt dependencies).
+# Using the default package would build and run fine but silently receive
+# zero messages — a hard failure to diagnose later. The fix is OSRF's own
+# apt repo, which publishes a Harmonic-paired `ros-humble-ros-gzharmonic-*`
+# package set — verified its libgz-transport13 dependency matches px4-sim's
+# installed Harmonic libs before adding this. Same repo/key PX4's own
+# Tools/setup/ubuntu.sh uses for px4-sim (see that script for the identical
+# commands) — not a new/different source of truth, just added here too.
+RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/gazebo-stable.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-ros-gzharmonic-bridge \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── OpenVINS (Phase 3 Milestone B VIO estimator) ───────────────────────────
+# No Humble apt package exists — build from source, matching OpenVINS's own
+# Dockerfile_ros2_22_04 reference. Built into a separate underlay workspace
+# (/opt/openvins_ws), same pattern as /opt/px4_ros2_ws — never rebuilt just
+# because ros2_ws/src/ (bind-mounted, edited constantly) changes.
+# Dependencies resolved via `rosdep`, not hand-listed — the standard,
+# maintainable way to build a third-party ROS 2 package from source: it
+# reads OpenVINS's own package.xml rather than us guessing/hand-tracking
+# its dependency list (verified live: rosdep resolves ros-humble-cv-bridge,
+# libopencv-dev, libopencv-contrib-dev, libboost-all-dev, libceres-dev,
+# ros-humble-image-transport — before adding this to the Dockerfile).
+WORKDIR /opt/openvins_ws/src
+RUN git clone --depth 1 https://github.com/rpng/open_vins.git
+
+WORKDIR /opt/openvins_ws
+# apt-get update is required here even though an earlier layer already ran
+# it — that layer's own `rm -rf /var/lib/apt/lists/*` cleanup wipes the apt
+# package index, so a fresh RUN layer starts with no cache; rosdep's own
+# `rosdep update` only refreshes rosdep's dependency-key database, a
+# completely different cache, and does not imply `apt-get update`.
+RUN apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src -y \
+    && rm -rf /var/lib/apt/lists/*
+RUN . /opt/ros/humble/setup.sh \
+    && colcon build --packages-select ov_core ov_init ov_msckf ov_eval
+
+# ── rqt_image_view (live camera preview, GUI mode only) ────────────────────
+# Baked in rather than installed at `docker run` time so `docker-compose.gui.
+# yml`'s rqt-viewer service starts instantly and can subscribe to
+# /camera/camera/color/image_raw BEFORE a mission's camera_imu_bridge even
+# exists — DDS discovery connects them lazily whenever the publisher
+# appears. This ordering matters: `autonomy.launch.py`'s on_exit=Shutdown()
+# (Phase 3 Milestone B, part 9) tears the camera bridge down the instant a
+# mission finishes, so a viewer that only starts AFTER the mission (the
+# previous manual workflow) can easily lose the race entirely.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-rqt-image-view \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
-    && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc
+    && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc \
+    && echo "source /opt/openvins_ws/install/setup.bash" >> /root/.bashrc
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 

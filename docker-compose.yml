@@ -36,8 +36,29 @@ services:
     image: quad/px4-sim:v1.17.0
     container_name: px4-sim
     network_mode: host
+    # PX4's pxh> shell (its foreground process) expects an interactive
+    # terminal. Without one, `docker compose up -d` gives it a closed/EOF
+    # stdin, and PX4's shell spins retrying reads on that closed stdin
+    # instead of blocking — confirmed live: without this, `docker logs
+    # px4-sim` showed hundreds of repeated `[2Kpxh>` prompt-redraw escape
+    # sequences and `docker stats` showed the px4 process pinned at ~70%+
+    # CPU with Gazebo's real-time factor dragged down to ~0.2. Under GUI
+    # mode specifically, that CPU starvation can make the Gazebo GUI
+    # client's initial scene/state sync race the drone's dynamic spawn and
+    # miss it — the drone exists and simulates correctly (confirmed via
+    # `gz service .../scene/info`) but never renders in the 3D view/entity
+    # tree until something forces a resync (see `make gz-resync`, kept as
+    # a documented fallback below in case this ever recurs). `tty`+
+    # `stdin_open` give the container a real pseudo-TTY and open stdin —
+    # the actual fix, not a workaround.
+    tty: true
+    stdin_open: true
     environment:
       PX4_HEADLESS: "1"
+      # empty (default, Phase 1/2) or vio_test (Phase 3 Milestone B — colored
+      # props for monocular VIO feature tracking). See
+      # resource/phase3-gps-denied-localization-source.md.
+      PX4_GZ_WORLD: "${PX4_GZ_WORLD:-empty}"
     profiles: [sim]
 
   # ── ROS 2 Humble + PX4 uXRCE-DDS bridge ───────────────────────────────────

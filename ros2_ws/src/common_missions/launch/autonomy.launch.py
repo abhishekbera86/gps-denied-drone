@@ -8,22 +8,24 @@ entire sim-vs-real difference at the autonomy layer.
 
 Arguments:
   action=hover|mission   what to fly (default: mission)
-  mission=square|survey  which mission, when action=mission (default: square)
+  mission=square         which mission, when action=mission (default and
+                         currently only option: square)
   params_file=<path>     optional ROS 2 params YAML applied to the node
                          (empty = use the nodes' built-in defaults)
 
 Examples:
   ros2 launch common_missions autonomy.launch.py action:=hover
-  ros2 launch common_missions autonomy.launch.py action:=mission mission:=survey \
+  ros2 launch common_missions autonomy.launch.py action:=mission mission:=square \
       params_file:=/path/to/sim_params.yaml
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, Shutdown
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-MISSIONS = ('square', 'survey')
+MISSIONS = ('square',)
 
 
 def launch_autonomy(context):
@@ -44,12 +46,35 @@ def launch_autonomy(context):
     else:
         raise ValueError(f"Unknown action '{action}' — choose 'hover' or 'mission'")
 
-    return [Node(
+    flight_node = Node(
         package=package,
         executable=executable,
         output='screen',
         parameters=parameters,
-    )]
+    )
+    return [
+        flight_node,
+        # The VIO/bridge nodes (openvins, camera_imu_bridge, the odometry
+        # bridge — added by sim_bringup/hw_bringup alongside this include)
+        # have no exit condition of their own; without this, they keep
+        # running indefinitely after the flight node's own state machine
+        # finishes (or crashes), continuing to fuse a VIO estimate into PX4
+        # with nothing left to sanity-check it against a live mission.
+        # Confirmed live (2026-07-09): a leftover OpenVINS instance kept
+        # running after a mission's "Landed and disarmed" line, its own
+        # position estimate ran away unbounded (100+ m within a couple
+        # minutes — see DEVELOPMENT_STATUS.md), and PX4's real EKF2 fused
+        # enough of it before disarm to leave `vehicle_local_position`
+        # reporting a bogus estimate tens of meters off — which then broke
+        # arming for the NEXT flight in the same containers. Shutting the
+        # whole launch down the moment the flight node exits, success or
+        # failure, closes that window.
+        RegisterEventHandler(OnProcessExit(
+            target_action=flight_node,
+            on_exit=Shutdown(
+                reason='flight/mission node exited — shutting down the rest of the launch'),
+        )),
+    ]
 
 
 def generate_launch_description():

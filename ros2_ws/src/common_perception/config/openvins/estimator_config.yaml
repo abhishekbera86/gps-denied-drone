@@ -1,0 +1,172 @@
+%YAML:1.0 # need to specify the file type at the top!
+#
+# estimator_config.yaml — OpenVINS MSCKF config for the d435i simulated
+# camera (mono RGB + the camera's own onboard IMU — see
+# docker/px4_sitl_models/d435i/model.sdf). Adapted from OpenVINS's own
+# config/rs_d455 (the closest upstream reference — no d435i example exists
+# upstream) with max_cameras/use_stereo changed to mono: this sim rig has
+# one color camera bridged (see ../ros_gz_bridge.yaml), not a stereo pair,
+# and MSCKF's native mode is mono/stereo visual-inertial, not RGB-D — the
+# depth stream is bridged separately for other future uses, not fed here.
+# See resource/phase3-gps-denied-localization-source.md for the full design.
+
+verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
+
+use_fej: true
+integration: "rk4"
+use_stereo: false # mono: one bridged color camera, not a stereo pair
+max_cameras: 1
+
+# calib_cam_extrinsics is deliberately FALSE, not the OpenVINS-default true:
+# a real flight test caught the online extrinsics calibrator converging to
+# (and then, under an aggressive AUTO_LAND maneuver, diverging from) a
+# value that was NOT what kalibr_imucam_chain.yaml seeded — see that file's
+# T_cam_imu comment for the full incident. Now that the correct, empirically
+# -confirmed rotation is seeded directly, freezing it removes the failure
+# class entirely instead of re-risking it every flight. Intrinsics/
+# timeoffset calibration stayed enabled — no evidence either was ever wrong,
+# only extrinsics rotation was.
+calib_cam_extrinsics: false
+calib_cam_intrinsics: true
+calib_cam_timeoffset: true
+calib_imu_intrinsics: false
+calib_imu_g_sensitivity: false
+
+max_clones: 11
+max_slam: 50
+max_slam_in_update: 25
+max_msckf_in_update: 40
+dt_slam_delay: 1
+
+gravity_mag: 9.81
+
+feat_rep_msckf: "GLOBAL_3D"
+feat_rep_slam: "ANCHORED_MSCKF_INVERSE_DEPTH"
+feat_rep_aruco: "ANCHORED_MSCKF_INVERSE_DEPTH"
+
+# try_zupt: true (not rs_d455's default false) so the static initializer can
+# use its "is_still" path and init while the vehicle sits on the ground
+# before arming, instead of requiring `wait_for_jerk` to catch the exact
+# takeoff acceleration transient — confirmed live that with try_zupt:false,
+# InertialInitializer.cpp logs "[init]: failed static init: no accel jerk
+# detected" forever while stationary (the DynamicInitializer, the other
+# path, is Ceres-based and only triggers once already moving). Initializing
+# before liftoff means PX4 has valid vision odometry from the first
+# waypoint, not partway through the takeoff climb.
+#
+# zupt_only_at_beginning: true — TRIED false once (2026-07-09) to fix a
+# real, confirmed post-landing drift bug (a `square` mission landed the
+# physical vehicle cleanly — confirmed via Gazebo's own ground-truth pose —
+# but PX4's own position/velocity ESTIMATE kept drifting afterward and
+# `landed` never went true, blocking auto-disarm; see
+# DEVELOPMENT_STATUS.md "Milestone B result, part 3"). `false` matches
+# upstream's own default AND `rs_d455` (the reference this file was adapted
+# from), so it looked like a safe, well-precedented fix.
+#
+# It was NOT safe here — reverted after it caused a WORSE regression,
+# confirmed live: the vehicle never left the ground at all. Root cause is
+# structural, not a tuning knob: `zupt_only_at_beginning: true` gates the
+# runtime ZUPT updater (VioManager.cpp) to fire only until the vehicle has
+# moved once, ever (`has_moved_since_zupt` latches permanently true after
+# that) — `false` lets it fire ANY time velocity+disparity are low enough,
+# which necessarily includes v=0 AT THE INSTANT A TAKEOFF BEGINS (every
+# takeoff starts from rest, by definition). ZUPT accepting that zero
+# velocity as ground truth creates a self-reinforcing lock: EKF believes
+# v=0 -> commanded thrust barely changes anything visible in a mono
+# camera's disparity -> ZUPT re-fires next frame -> repeat forever. Live
+# log showed exactly this: 64+ consecutive `[ZUPT]: accepted |v_IinG| =
+# 0.001` lines and `z` never leaving ~0 for 15+ seconds after "Armed and
+# offboard — climbing" was logged. OpenVINS's existing flags don't support
+# the actually-needed policy ("ZUPT before flight AND after landing, but
+# never mid-flight, including at the exact start of a commanded takeoff")
+# — this is a genuine gap, not a config mistake. `true` is the safe
+# setting: it fixes takeoff (confirmed working across every flight test
+# this project has run) at the cost of the post-landing drift bug above
+# remaining OPEN. Fixing that properly needs a different approach —
+# leading candidate: have `common_control`'s own state machine explicitly
+# command disarm after a landing timeout, rather than depending on PX4's
+# `land_detected` (which depends on a good velocity estimate) — see
+# DEVELOPMENT_STATUS.md for why this wasn't done yet (it would modify
+# common_control, previously verified untouched through all of Phase 3, a
+# deliberate invariant worth a considered decision rather than a quick
+# patch under this specific bug). This flag is UNRELATED to the pre-arm
+# static-initializer behavior above (`try_zupt`, `ov_init`'s own "is_still"
+# path) — confirmed by grepping ov_init for any reference to
+# `zupt_only_at_beginning`: there is none, it's purely a VioManager.cpp
+# (post-init, runtime) concept.
+try_zupt: true
+zupt_chi2_multipler: 0
+zupt_max_velocity: 0.1
+zupt_noise_multiplier: 10
+zupt_max_disparity: 0.5
+zupt_only_at_beginning: true
+
+# ==================================================================
+# ==================================================================
+
+init_window_time: 2.0
+init_imu_thresh: 1.5
+init_max_disparity: 10.0
+init_max_features: 50
+
+init_dyn_use: false
+init_dyn_mle_opt_calib: false
+init_dyn_mle_max_iter: 50
+init_dyn_mle_max_time: 0.05
+init_dyn_mle_max_threads: 6
+init_dyn_num_pose: 6
+init_dyn_min_deg: 10.0
+
+init_dyn_inflation_ori: 10
+init_dyn_inflation_vel: 100
+init_dyn_inflation_bg: 10
+init_dyn_inflation_ba: 100
+init_dyn_min_rec_cond: 1e-12
+
+init_dyn_bias_g: [ 0.0, 0.0, 0.0 ]
+init_dyn_bias_a: [ 0.0, 0.0, 0.0 ]
+
+# ==================================================================
+# ==================================================================
+
+record_timing_information: false
+record_timing_filepath: "/tmp/traj_timing.txt"
+
+save_total_state: false
+filepath_est: "/tmp/ov_estimate.txt"
+filepath_std: "/tmp/ov_estimate_std.txt"
+filepath_gt: "/tmp/ov_groundtruth.txt"
+
+# ==================================================================
+# ==================================================================
+
+use_klt: true
+num_pts: 200
+fast_threshold: 30
+grid_x: 5
+grid_y: 5
+min_px_dist: 15
+knn_ratio: 0.70
+track_frequency: 30.0 # matches the bridged d435i color sensor's 30 Hz Gazebo update rate
+downsample_cameras: false
+num_opencv_threads: 4
+histogram_method: "HISTOGRAM"
+
+use_aruco: false
+num_aruco: 1024
+downsize_aruco: true
+
+# ==================================================================
+# ==================================================================
+
+up_msckf_sigma_px: 1
+up_msckf_chi2_multipler: 1
+up_slam_sigma_px: 1
+up_slam_chi2_multipler: 1
+up_aruco_sigma_px: 1
+up_aruco_chi2_multipler: 1
+
+use_mask: false
+
+relative_config_imu: "kalibr_imu_chain.yaml"
+relative_config_imucam: "kalibr_imucam_chain.yaml"

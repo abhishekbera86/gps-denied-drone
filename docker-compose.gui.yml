@@ -15,6 +15,19 @@
 # W541: renders on the Intel HD 4600 iGPU via Mesa. If the window is black or
 # gz crashes on the GPU, force software rendering: `GZ_SW_RENDER=1 make sim-gui`
 # (llvmpipe — slower but always works).
+#
+# Also starts `rqt-viewer` — a live /camera/camera/color/image_raw preview,
+# up from the start of `make sim-gui` rather than launched manually per
+# mission. This matters, not just convenience: it subscribes BEFORE any
+# mission's camera_imu_bridge exists, so DDS discovery connects them
+# whenever the publisher shows up, regardless of how fast/slow you start a
+# mission afterward. Starting the viewer only AFTER a mission (the old
+# manual `docker run` workflow) could lose the race entirely — the mission
+# node's own on_exit=Shutdown() (Phase 3 Milestone B, part 9) tears the
+# camera bridge down the instant the mission finishes, so a late viewer
+# might never see a single frame. No GPU rendering needed for a 2D image
+# widget, so this doesn't need LIBGL_ALWAYS_SOFTWARE/GZ_SW_RENDER — only
+# Gazebo's 3D view does.
 # =============================================================================
 
 services:
@@ -34,3 +47,27 @@ services:
     devices:
       # DRI render nodes so Mesa can use the GPUs (card1/renderD128 = Intel).
       - /dev/dri:/dev/dri
+
+  rqt-viewer:
+    image: quad/ros2-autonomy:humble
+    container_name: rqt-viewer
+    network_mode: host
+    environment:
+      DISPLAY: "${DISPLAY:-:0}"
+      QT_X11_NO_MITSHM: "1"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    devices:
+      - /dev/dri:/dev/dri
+    depends_on:
+      - px4-sim
+    # The base image's ENTRYPOINT starts a second Micro-XRCE-DDS-Agent —
+    # must be skipped here: this container shares the host network
+    # namespace with ros2-autonomy (network_mode: host), which already runs
+    # one bound to the same UDP port, so a second instance would either
+    # fail to bind or fight over the same PX4 DDS stream. This viewer
+    # doesn't need the DDS agent at all — only rqt_image_view.
+    entrypoint: []
+    command: bash -c "source /opt/ros/humble/setup.bash && exec ros2 run rqt_image_view rqt_image_view /camera/camera/color/image_raw"
+    profiles: [sim]

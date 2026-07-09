@@ -9,7 +9,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-MISSIONS = ('square', 'survey')
+MISSIONS = ('square',)
 
 
 def launch_mission(context):

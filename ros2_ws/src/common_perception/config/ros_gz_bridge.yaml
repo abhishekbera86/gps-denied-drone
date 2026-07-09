@@ -1,0 +1,64 @@
+# ros_gz_bridge.yaml — Gazebo (x500_depth, now flying our local d435i model
+# — see docker/px4_sitl_models/d435i/model.sdf) camera/IMU -> ROS 2, remapped
+# to the EXACT topic names/types the real RealSense D435i's realsense-ros
+# (4.58.2, Humble) driver produces — so OpenVINS's config (and any future
+# consumer) subscribes to the same names regardless of which bringup is
+# active. See resource/phase3-gps-denied-localization-source.md.
+#
+# Source topics confirmed LIVE against the running x500_depth SITL model
+# (`gz topic -l` / `gz topic -i`) — not read from the SDF alone:
+#   .../link/camera_link/sensor/color/image        RGB camera (1280x720@30Hz)
+#   .../link/camera_link/sensor/color/camera_info
+#   .../link/camera_link/sensor/imu/imu             the D435i's OWN onboard
+#                                                    IMU (200 Hz) — see note
+#                                                    below.
+#
+# NOTE on IMU choice: the stock OakD-Lite model (used before the d435i swap)
+# only had a dangling `camera_imu` sensor with ZERO publishers, so Milestone
+# A/early Milestone B bridged the flight controller's own imu_sensor instead
+# — a legitimate VIO pattern, but a sim/real mismatch (real hardware's
+# realsense-ros /camera/camera/imu is the CAMERA's own IMU, not the flight
+# controller's). Our local d435i model defines a real, working `imu` sensor
+# co-located with the color sensor, so sim now matches real hardware
+# end-to-end: same camera, same onboard IMU, same topic names.
+#
+# world name is "vio_test" (docker/px4_sitl_worlds/vio_test.sdf), NOT the
+# default "empty" world — confirmed live that empty's flat untextured ground
+# gives OpenVINS's feature tracker zero usable corners (initializer failed
+# every frame). vio_test adds a ring of colored static boxes; select it with
+# PX4_GZ_WORLD=vio_test / `make sim PX4_GZ_WORLD=vio_test` before flying with
+# VIO_BACKEND=openvins. The spawned model instance is "x500_depth_0" (PX4's
+# default first-instance suffix) — both are environment-specific; re-run
+# `gz topic -l` if either changes.
+
+- gz_topic_name: "/world/vio_test/model/x500_depth_0/link/camera_link/sensor/color/image"
+  ros_topic_name: "/camera/camera/color/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+  lazy: false
+
+- gz_topic_name: "/world/vio_test/model/x500_depth_0/link/camera_link/sensor/color/camera_info"
+  ros_topic_name: "/camera/camera/color/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+  lazy: false
+
+- gz_topic_name: "/world/vio_test/model/x500_depth_0/link/camera_link/sensor/imu/imu"
+  ros_topic_name: "/camera/camera/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+  lazy: false
+
+# Depth is bridged too (future Nav2/obstacle-avoidance use, and for sim/real
+# topic-name parity) but NOT consumed by OpenVINS's mono VIO pipeline below
+# — its encoding differs from real hardware (Gazebo: 32FC1 meters; D435i:
+# 16UC1 millimeters) and is deliberately not reconciled this phase.
+- gz_topic_name: "/depth_camera"
+  ros_topic_name: "/camera/camera/depth/image_rect_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+  lazy: false

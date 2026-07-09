@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <!--
+    Our own copy of PX4-Autopilot's
+    Tools/simulation/gz/models/x500_depth/model.sdf, swapping the camera
+    package from the stock OakD-Lite to our local d435i model (see
+    ../d435i/model.sdf) — real hardware (Phase 4) flies a RealSense D435i,
+    so sim should fly the same camera, not a different one with matched
+    topic names standing in for it.
+
+    Overlaid into the image post-clone by Dockerfile.px4_sim, OVERWRITING
+    the upstream file at Tools/simulation/gz/models/x500_depth/model.sdf.
+    The model name/directory stays "x500_depth" on purpose so the existing
+    airframe (4002_gz_x500_depth, PX4_SIM_MODEL=gz_x500_depth) needs no
+    changes. Never edit PX4-Autopilot's own checkout — edit this file and
+    rebuild (`docker compose build px4-sim`).
+  -->
+  <model name='x500_depth'>
+    <include merge='true'>
+      <uri>x500</uri>
+    </include>
+    <include merge='true'>
+      <uri>model://d435i</uri>
+      <pose>.12 .03 .242 0 0 0</pose>
+    </include>
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>camera_link</child>
+      <pose relative_to="base_link">.12 .03 .242 0 0 0</pose>
+    </joint>
+  </model>
+</sdf>

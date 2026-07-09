@@ -61,6 +61,29 @@ RUN chmod +x ROMFS/px4fmu_common/init.d-posix/airframes/4002_gz_x500_depth.post 
 COPY docker/px4_sitl_worlds/empty.sdf \
      Tools/simulation/gz/worlds/empty.sdf
 
+# Second repo-owned overlay world, for Phase 3 Milestone B (real OpenVINS):
+# a ring of colored static boxes around the mission footprint. Confirmed
+# live that empty.sdf's flat untextured ground gives monocular VIO zero
+# trackable corners (OpenVINS's initializer failed every frame). Select at
+# runtime with PX4_GZ_WORLD=vio_test. See
+# resource/phase3-gps-denied-localization-source.md.
+COPY docker/px4_sitl_worlds/vio_test.sdf \
+     Tools/simulation/gz/worlds/vio_test.sdf
+
+# Repo-owned overlay MODELS (same never-fork-upstream overlay mechanism as
+# the airframe .post and worlds above, applied to models instead): swap
+# x500_depth's camera package from the stock OakD-Lite to our own local
+# d435i model, so sim flies the SAME physical camera (Intel RealSense
+# D435i) that Phase 4 hardware bring-up uses via realsense-ros — see
+# docker/px4_sitl_models/d435i/model.sdf and
+# docker/px4_sitl_models/x500_d435i_depth/model.sdf for the full rationale.
+# The second COPY overwrites the upstream x500_depth/model.sdf; upstream's
+# own OakD-Lite model directory is left untouched on disk, just unreferenced.
+COPY docker/px4_sitl_models/d435i \
+     Tools/simulation/gz/models/d435i
+COPY docker/px4_sitl_models/x500_d435i_depth/model.sdf \
+     Tools/simulation/gz/models/x500_depth/model.sdf
+
 # Default to headless + the empty world. Both are overridable at runtime via
 # the PX4_HEADLESS / PX4_GZ_WORLD env vars (see docker-compose.gui.yml, which
 # sets PX4_HEADLESS=0 to pop the Gazebo GUI on the host desktop).
