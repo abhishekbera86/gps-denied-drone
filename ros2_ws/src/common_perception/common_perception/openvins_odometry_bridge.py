@@ -33,6 +33,23 @@ during the false-stillness window. Reverted to plain passthrough. The
 post-landing drift issue remains open — see DEVELOPMENT_STATUS.md for the
 current best next step (a common_control-level explicit disarm-after-
 landing-timeout, not a VIO/bridge-layer fix).
+
+WHY THIS NODE MIGHT PUBLISH NOTHING FOR A WHILE AFTER LAUNCH (2026-07-10,
+not a bug here): OpenVINS's own `ROS2Visualizer::visualize_odometry()`
+refuses to publish `/ov_msckf/odomimu` at all until 1 full second of ITS
+OWN internal (Gazebo-simulation-derived) time has passed since
+initialization. Under CPU contention, Gazebo's real-time-factor can
+collapse hard — confirmed live at 0.023 (~1/44th of real time), at which
+that 1-second gate alone needs ~44 REAL seconds, and `/fmu/in/
+vehicle_visual_odometry` (this node's own output) can go a genuinely long
+time — confirmed once at 250+ seconds — with zero messages while
+completely healthy otherwise. If a mission is stuck at PX4's "Preflight
+Fail: ekf2 missing data" / "waiting for estimator to initialize", check
+`gz topic -e -t /world/<world>/stats` for `real_time_factor` before
+assuming a code bug — see README §12 issue 29 and
+`set_localization_source.py`'s docstring for the full investigation.
+SITL-only: no simulated clock exists on Phase 4 real hardware, so this
+cannot recur there.
 """
 
 import rclpy
@@ -107,11 +124,18 @@ class OpenvinsOdometryBridge(Node):
         out.angular_velocity = list(angular_velocity_frd)
 
         # Best-effort diagonal from OpenVINS's 6x6 row-major covariance
-        # (indices 0, 7, 14 = xx, yy, zz). If this proves too noisy/optimistic
-        # for a fresh mono VIO setup, override with fixed EKF2_EVP_NOISE /
-        # EKF2_EVV_NOISE / EKF2_EVA_NOISE params on the PX4 side instead of
-        # trusting the message's own variance — simpler to reason about
-        # while tuning. See resource/phase3-gps-denied-localization-source.md.
+        # (indices 0, 7, 14 = xx, yy, zz). This per-message covariance
+        # swinging with however confident (or not) OpenVINS happened to feel
+        # on a given frame was a real, confirmed contributor to
+        # flight-to-flight instability (resource/Vio_Drift_analysis.txt) —
+        # `set_localization_source.py` now raises EKF2_EVP_NOISE/
+        # EKF2_EVV_NOISE at the vision-source switch, which PX4 applies as a
+        # LOWER BOUND on top of whatever's sent here (PX4's own
+        # EKF2_EV_NOISE_MD=0 default — deliberately left untouched, see that
+        # module's docstring for why EKF2_EV_NOISE_MD=1 was tried and
+        # reverted). So this field still matters when OpenVINS reports
+        # something looser than the floor; it's just no longer trusted
+        # BELOW that floor.
         pc = msg.pose.covariance
         tc = msg.twist.covariance
         out.position_variance = [pc[0], pc[7], pc[14]]

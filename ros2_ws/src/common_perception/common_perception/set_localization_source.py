@@ -49,6 +49,66 @@ maneuvers than steady cruise, where the mismatch would bite hardest.
 PX4's own param docs (params_external_vision.yaml): "position of VI sensor
 focal point in body frame" — FRD, so the FLU mount offset above converts
 as (X_frd, Y_frd, Z_frd) = (X_flu, -Y_flu, -Z_flu) = (0.12, -0.03, -0.242).
+
+EKF2_EVP_NOISE/EKF2_EVV_NOISE (vision-source switch only, set
+unconditionally alongside EKF2_EV_CTRL): confirmed via PX4's own
+params_external_vision.yaml that EKF2_EV_NOISE_MD (left at PX4's default,
+0, NOT changed here — see below) takes vision measurement noise from the
+message itself, "the EV noise parameters are used as a lower bound."
+`openvins_odometry_bridge.py` forwards OpenVINS's own raw per-message
+covariance untouched, so under the default floor (PX4's own 0.1 m /
+0.1 m/s), EKF2's trust in vision can still swing up toward however
+confident OpenVINS's covariance estimate feels on a given frame —
+plausibly a real contributor to inconsistent flight behavior (accurate on
+one run, drifting/wall-hitting on another, nothing else changed) reported
+after Phase 3 Milestone B: `resource/Vio_Drift_analysis.txt`. Raising the
+floor to 0.3 m / 0.15 m/s bounds how confident EKF2 will EVER treat vision
+as being, without disabling the message-based path entirely. Starting
+values, not derived from first principles — retune from live results.
+
+TRIED AND REVERTED (2026-07-10): `EKF2_EV_NOISE_MD=1` ("use ONLY the fixed
+params, ignore the message's covariance entirely") looked like the more
+thorough fix and was tried first — confirmed LIVE to be at minimum
+correlated with a regression: two clean, fully-restarted (`docker compose
+down`/`up`, not a partial restart) flight attempts both stuck at
+`arming_state=STANDBY` for the full test duration, PX4 repeatedly logging
+"Arming denied: Resolve system health failures first" with an earlier
+"Preflight Fail: ekf2 missing data" ("waiting for estimator to
+initialize" — `EstimatorCheck.cpp`). A third attempt, identical except
+reverting only this one param back to PX4's default (0), armed, flew the
+full `square` mission, and disarmed cleanly, so it was reverted here.
+
+IMPORTANT CAVEAT (2026-07-10, found testing the floor-only fix above): the
+exact same "ekf2 missing data"/never-arms symptom ALSO occurred once, on a
+clean fully-restarted attempt, WITH EKF2_EV_NOISE_MD left at 0 (this
+file's current, "safe" config) — 3 of 4 total clean attempts on this
+config armed/flew/landed normally, 1 did not, in the exact same way as the
+reverted mode=1 attempts. This means EKF2_EV_NOISE_MD=1 was probably NOT
+uniquely responsible for the earlier failures — reverting it was still the
+right conservative call (it's not proven safe either), but there was a
+SEPARATE, pre-existing flakiness in how reliably EKF2/OpenVINS reach
+"estimator initialized" before arming, independent of this file's params.
+
+ROOT-CAUSED (2026-07-10, later same day): NOT a code bug anywhere in this
+project, PX4, or OpenVINS — a SITL performance/timing issue. OpenVINS's
+own `ROS2Visualizer::visualize_odometry()` (ov_msckf source) refuses to
+publish ANY odometry until `(timestamp - _app->initialized_time()) >= 1`
+— one full second of OpenVINS's own internal (Gazebo-simulation-derived)
+time since init. Confirmed live: `gz topic -e -t
+/world/vio_test/stats` measured `real_time_factor: 0.023` (~1/44th of
+real time) during a stuck attempt, and `/fmu/in/vehicle_visual_odometry`
+received ZERO messages across a full 250-second wall-clock test — `gz
+sim` alone was using 448% CPU on an 8-core host with load average >5.
+At that RTF, OpenVINS's mandatory 1-second (sim-time) gate needs ~44
+real seconds just to START publishing, and can take arbitrarily longer if
+RTF degrades further under load — easily exceeding any reasonable
+arm-retry patience. This is 100% specific to SITL's Gazebo-lockstep
+simulated clock (confirmed via PX4 subscribing to `/world/<world>/clock`
+— `px4-rc.gzsim`) and CANNOT recur on Phase 4 real hardware, which has no
+simulated clock at all. See README §12 issue 29 for the full
+investigation and mitigation options (reduce `vio_test.sdf` prop count/
+camera resolution, ensure an idle host before testing, be patient rather
+than assuming a stall — this is slowness, not a hang).
 """
 
 import argparse
@@ -78,6 +138,18 @@ VISION_LEVER_ARM_FRD = {
     'EKF2_EV_POS_X': 0.12,
     'EKF2_EV_POS_Y': -0.03,
     'EKF2_EV_POS_Z': -0.242,
+}
+
+# Vision fusion noise FLOOR (see module docstring) — set only when switching
+# to 'vision', same reasoning as VISION_LEVER_ARM_FRD above. Deliberately
+# does NOT touch EKF2_EV_NOISE_MD (left at PX4's default, 0): confirmed
+# live that EKF2_EV_NOISE_MD=1 breaks arming entirely (see module
+# docstring's "TRIED AND REVERTED"), so these values raise the LOWER BOUND
+# PX4 applies on top of OpenVINS's own per-message covariance rather than
+# replacing it outright.
+VISION_NOISE_VALUES = {
+    'EKF2_EVP_NOISE': 0.3,   # m — starting point, retune from live results
+    'EKF2_EVV_NOISE': 0.15,  # m/s
 }
 
 CONNECT_TIMEOUT_S = 30.0
@@ -176,6 +248,8 @@ def set_localization_source(source: str, mavlink_url: str) -> bool:
 
     if source == 'vision':
         for name, value in VISION_LEVER_ARM_FRD.items():
+            ok = _set_float_param(conn, name, value) and ok
+        for name, value in VISION_NOISE_VALUES.items():
             ok = _set_float_param(conn, name, value) and ok
 
     if ok:

@@ -225,6 +225,32 @@ actually flying; that's expected, not a bug — the GPS localization path
 never starts a camera bridge at all. `make stop` tears it down along with
 everything else.
 
+`make sim-gui` also starts a fourth container, `rviz2` — an RViz2 window
+showing the vehicle's live TF (`odom` → `base_link`) and the path it has
+actually flown (`/drone/path`). **Deliberately TF/path only, no camera
+image** — an earlier version also showed the camera feed in RViz, but that
+meant RViz's `Image` display and `rqt-viewer` both subscribing to the same
+raw ~83 MB/s stream (1280×720@30Hz), and RViz's `Image` plugin uploads a
+fresh GPU texture on the same render thread as the 3D view — confirmed
+live to visibly lag/go stale in a way `rqt-viewer`'s dedicated 2D widget
+doesn't (§12 issue 28, `resource/Vio_Drift_analysis.txt`). Use
+`rqt-viewer` for the camera; `rviz2` for spatial data. Unlike `rqt-viewer`
+(a baked-in apt package), `rviz2`'s window runs this repo's own
+`common_perception` package (`state_tf_publisher` node + `viz.launch.py`,
+bind-mounted and colcon-built like every other node here) — **`make
+build-ws` must have run at least once before `make sim-gui`**, or the
+container exits immediately with a "Workspace not built yet" message
+(check `make ps` / `make logs`). `state_tf_publisher` subscribes to
+`/fmu/out/vehicle_odometry`, which PX4 publishes as soon as its estimator
+initializes — no mission needed — so the TF/path appear immediately and
+keep updating across multiple mission runs (this node is deliberately
+*not* part of a mission's own launch/shutdown lifecycle, for the same "up
+from the start" reason as `rqt-viewer` above). Sim/hw-agnostic by design
+— `viz.launch.py` only touches topics PX4 and `common_perception` publish
+identically on real hardware, so the same launch file is the intended
+Phase 4 hardware-GUI viewer too,
+unchanged.
+
 **Choosing a world** — two exist, pick with `PX4_GZ_WORLD=`:
 
 ```bash
@@ -424,7 +450,7 @@ syntax) or as an environment variable before it.
 | `make build` | — | Builds the `px4-sim` and `ros2-autonomy` **Docker images**. One-time, or after editing a Dockerfile. |
 | `make build-ws` | — | Colcon-builds the **ROS 2 workspace** inside `ros2-autonomy`. One-time, or after adding/removing a package or editing `setup.py`/`package.xml` — NOT needed after editing Python/launch/config files (§4.4). |
 | `make sim` | `PX4_GZ_WORLD=empty` *(default)* or `vio_test` | Starts PX4 SITL (Gazebo Harmonic, **headless**) + the ROS 2 bridge container. |
-| `make sim-gui` | `PX4_GZ_WORLD=` (same as above) · `GZ_SW_RENDER=1` *(optional)* — forces software (llvmpipe) rendering if the GPU path fails | Same stack as `make sim`, but with the real Gazebo GUI window forwarded to the host X display, plus a third container (`rqt-viewer`) showing a live `/camera/camera/color/image_raw` preview, up from the start so it can't lose the sequencing race against a mission's camera bridge (§4.3). **Always pass `PX4_GZ_WORLD` on the command line, never edit it into `.env`** — see §12 issue 19. |
+| `make sim-gui` | `PX4_GZ_WORLD=` (same as above) · `GZ_SW_RENDER=1` *(optional)* — forces software (llvmpipe) rendering if the GPU path fails | Same stack as `make sim`, but with the real Gazebo GUI window forwarded to the host X display, plus `rqt-viewer` (live `/camera/camera/color/image_raw` preview) and `rviz2` (live TF + flown path only, §4.3) — both up from the start so neither can lose the sequencing race against a mission's camera bridge. `rviz2` needs `make build-ws` to have run at least once. **Always pass `PX4_GZ_WORLD` on the command line, never edit it into `.env`** — see §12 issue 19. |
 | `make flight-test` | `LOCALIZATION=gps` *(default)* or `vision` · `VIO_BACKEND=loopback` *(default)* or `openvins` (only when `LOCALIZATION=vision`, and only with `PX4_GZ_WORLD=vio_test` — §8) | Flies the hover test (arm → takeoff → hover → land) via `sim_bringup`. Requires `make build-ws` first. |
 | `make mission` | `MISSION=square` *(default, and currently the only mission)* · `LOCALIZATION=` / `VIO_BACKEND=` (same as above) | Flies the named waypoint mission via `sim_bringup`. Requires `make build-ws` first. |
 | `make gz-resync` | — | Fallback: forces the Gazebo GUI to rebroadcast its full scene, for the rare case the drone doesn't appear in the GUI's 3D view (§4.3, §12 issue 20). No effect on headless mode. |
@@ -488,6 +514,16 @@ from the simulated D435i camera through OpenVINS and back into PX4:
 | `/camera/camera/color/camera_info` | `ros_gz_bridge` → OpenVINS | `sensor_msgs/msg/CameraInfo` | Intrinsics for the color stream. |
 | `/camera/camera/depth/image_rect_raw` | `ros_gz_bridge` (bridged, not consumed) | `sensor_msgs/msg/Image` | Bridged for topic-name parity/future Nav2 use — OpenVINS's mono VIO doesn't consume it. Encoding differs from real hardware (sim: float meters; D435i: `16UC1` mm) — not reconciled. |
 | `/ov_msckf/odomimu` | OpenVINS → `openvins_odometry_bridge` | `nav_msgs/msg/Odometry` | OpenVINS's own VIO estimate (ENU/FLU, arbitrary non-North-aligned yaw) — converted to NED/FRD and republished as `/fmu/in/vehicle_visual_odometry` above. |
+
+**`rviz2` live-viz topics (§4.3)** — published by `state_tf_publisher`
+(`common_perception`), started by `make sim-gui`'s `rviz2` container via
+`viz.launch.py`. Sim/hw-agnostic: sourced only from
+`/fmu/out/vehicle_odometry`, so identical on real hardware.
+
+| Topic | Direction | Message Type | Rate | Purpose |
+|---|---|---|---|---|
+| `tf` (`odom` → `base_link`) | Publish | `tf2_msgs/msg/TFMessage` | 10 Hz | The vehicle's live pose, converted from PX4's NED/FRD to ROS ENU/FLU via `frame_transforms` (reused unchanged from the VIO bridge — both conversions are their own inverse). |
+| `/drone/path` | Publish | `nav_msgs/msg/Path` | 10 Hz | The path actually flown, `odom`-frame — a rolling buffer capped at 20000 poses (~30+ min of history) so a long-running viz session can't grow it unbounded. |
 
 ---
 
@@ -635,10 +671,10 @@ mission node starts, sequenced by the launch file
 
 ### What actually gets set
 
-| `LOCALIZATION=` | `EKF2_GPS_CTRL` | `EKF2_EV_CTRL` | `EKF2_EV_POS_X/Y/Z` | Height reference |
-|---|---|---|---|---|
-| `gps` (default) | `7` (HPOS+VPOS+VEL) | `0` (off) | untouched | GPS |
-| `vision` | `0` (off) | `5` (HPOS+VEL) | `0.12 / -0.03 / -0.242` | Baro (automatic fallback) |
+| `LOCALIZATION=` | `EKF2_GPS_CTRL` | `EKF2_EV_CTRL` | `EKF2_EV_POS_X/Y/Z` | `EKF2_EVP_NOISE` / `EKF2_EVV_NOISE` (floor) | Height reference |
+|---|---|---|---|---|---|
+| `gps` (default) | `7` (HPOS+VPOS+VEL) | `0` (off) | untouched | untouched | GPS |
+| `vision` | `0` (off) | `5` (HPOS+VEL) | `0.12 / -0.03 / -0.242` | `0.3 m` / `0.15 m/s` | Baro (automatic fallback) |
 
 `EKF2_HGT_REF` (which height source PX4 treats as primary) is **never
 touched** — changing it requires a PX4 reboot, and disabling GPS already
@@ -655,6 +691,26 @@ without this offset EKF2 silently assumes they're the same point. Getting
 this wrong specifically corrupts attitude-change maneuvers (landing
 corrections have more of those than steady cruise) — a real, confirmed
 contributor to a landing-divergence bug this project hit (§12 issue 18).
+
+`EKF2_EVP_NOISE`/`EKF2_EVV_NOISE` (`vision` only, added 2026-07-10) fix a
+different real bug: PX4's default `EKF2_EV_NOISE_MD=0` takes vision
+measurement noise from the message itself, using these two parameters only
+as a LOWER BOUND — and `openvins_odometry_bridge` forwards OpenVINS's own
+raw per-frame covariance untouched, so EKF2's trust in vision can swing up
+toward however confident OpenVINS's estimate feels on a given frame, past
+PX4's own `0.1 m`/`0.1 m/s` default floor — a real, confirmed contributor
+to flight-to-flight instability (accurate on one `square` mission run,
+drifting/hitting the fence on the next, nothing else changed) — see §12
+issue 28 and `resource/Vio_Drift_analysis.txt`. Raised to `0.3 m`/`0.15
+m/s` here — starting values, not derived from first principles, retune
+from live flight results. **`EKF2_EV_NOISE_MD` is deliberately left
+untouched at PX4's default (`0`)** — setting it to `1` ("ignore the
+message's covariance entirely, use only the fixed params") was tried
+first and reverted: confirmed live to break arming outright (PX4 stuck at
+`arming_state=STANDBY`, "Preflight Fail: ekf2 missing data") across two
+clean, fully-restarted attempts, isolated via a third identical attempt
+that only reverted this one param and armed/flew/landed normally. See §12
+issue 28 for the full isolation.
 
 ### Confirming the switch actually took
 
@@ -733,6 +789,13 @@ they only ever read PX4's already-fused `vehicle_local_position_v1`.
 | `hw.launch.py` *(Phase 4 stub, untested)* | `hw_bringup` | `serial_device` (default `/dev/ttyUSB0`) · `baud` (default `921600`) · `action` · `mission` · `localization_source` · `vio_backend` · `mavlink_url` (UNTESTED SITL-shaped default) | `ros2 launch hw_bringup hw.launch.py serial_device:=/dev/ttyACM0 action:=mission mission:=square` |
 | `autonomy.launch.py` | `common_missions` | `action` (`hover`\|`mission`) · `mission` (`square`) · `params_file` (path, optional) | `ros2 launch common_missions autonomy.launch.py action:=hover` |
 | `mission.launch.py` | `common_missions` | `mission` (`square`, default `square`) | `ros2 launch common_missions mission.launch.py mission:=square` |
+| `viz.launch.py` | `common_perception` | — | `ros2 launch common_perception viz.launch.py` |
+
+`viz.launch.py` starts `state_tf_publisher` + RViz2 (`config/quad.rviz`) —
+what `make sim-gui`'s `rviz2` container runs (§4.3, §6). Not included by
+`sim.launch.py`/`hw.launch.py` on purpose: it's independent of any
+mission's lifecycle, run separately so it survives across multiple
+mission runs.
 
 `sim.launch.py` and `hw.launch.py` are what `make mission`/`make
 flight-test` actually run (§5) — they include `autonomy.launch.py` and pass
@@ -1163,6 +1226,182 @@ not a DDS agent of its own. `make stop` was updated to always tear down
 both compose files together (`--remove-orphans`), so this container gets
 cleaned up whether you used `make sim` or `make sim-gui` last.
 
+**27. `px4_msgs`' generated Python fields (e.g. `VehicleOdometry.position`,
+`.q`) are numpy `float32` arrays, not plain Python floats — assigning one
+straight into a `geometry_msgs` field (e.g.
+`TransformStamped.transform.translation.x`) throws `AssertionError: The
+'x' field must be of type 'float'` at publish time, not at import/lint
+time.** Hit live while adding `state_tf_publisher` (§4.3, §6) — the node's
+own frame-conversion math (reusing `frame_transforms`, unchanged from the
+VIO bridges) was correct, but its output stayed numpy-typed all the way
+through since none of the arithmetic in between forces a cast. Fixed by
+explicitly `float(v)`-casting every element of `msg.position`/`msg.q`
+before conversion. Worth knowing if writing a new node that reads any
+`px4_msgs` array field and republishes into a non-PX4 message type
+(`px4_msgs`-to-`px4_msgs` republishing, like `loopback_odometry_bridge`,
+never hits this — those fields accept numpy `float32` fine).
+`state_tf_publisher` (`common_perception`) broadcasts the vehicle's live
+TF (`odom` → `base_link`) and an accumulated `/drone/path`, sourced from
+`/fmu/out/vehicle_odometry` — the same "up from the start", mission-
+lifecycle-independent pattern as issue 26's `rqt-viewer`, run by a fourth
+`make sim-gui` container, `rviz2` (`common_perception/launch/viz.launch.py`).
+Verified live: `/tf` and `/drone/path` both populate correctly from PX4
+boot (no mission needed), RViz2 renders with real GPU OpenGL (not
+software fallback), and a full hover flight-test updated both throughout
+takeoff/hover/land with zero errors in any of the three GUI containers.
+
+**28. `VIO_BACKEND=openvins` flights were genuinely inconsistent flight to
+flight — accurate on one `square` mission run, drifting or hitting the
+`vio_test.sdf` fence on the next, nothing else changed — reported after
+Phase 3 Milestone B and analyzed in `resource/Vio_Drift_analysis.txt`.**
+Three real, independently-confirmed contributors, all fixed the same
+session (2026-07-10):
+
+- **EKF2 trusting a swinging, per-frame-optimistic vision covariance.**
+  Confirmed via PX4's own `params_external_vision.yaml`:
+  `EKF2_EV_NOISE_MD` defaults to `0` — "measurement noise is taken from
+  the vision message and the EV noise parameters are used as a lower
+  bound," NOT a fixed trust level — while `openvins_odometry_bridge.py`
+  forwards OpenVINS's own raw per-message covariance untouched. So EKF2's
+  actual moment-to-moment trust in vision swung with however confident (or
+  not) OpenVINS's own estimate happened to feel on a given frame — a
+  structural source of run-to-run inconsistency, not a tuning slip.
+  `set_localization_source.py` now raises the FLOOR — `EKF2_EVP_NOISE=0.3`/
+  `EKF2_EVV_NOISE=0.15` (up from PX4's own `0.1`/`0.1`) when switching to
+  `vision` (§8) — starting values, not derived from first principles,
+  retune from live results. **First attempt, tried and reverted the same
+  session:** `EKF2_EV_NOISE_MD=1` ("ignore the message's covariance
+  entirely, use only fixed params") looked like the more thorough fix, but
+  two clean, fully-restarted (`docker compose down`/`up`, ruling out a
+  stale-container false alarm) flight attempts both stuck at
+  `arming_state=STANDBY` the entire test duration, PX4 repeatedly logging
+  "Arming denied: Resolve system health failures first" / "Preflight
+  Fail: ekf2 missing data". A third attempt, identical except reverting
+  only `EKF2_EV_NOISE_MD` back to `0`, armed, flew, and disarmed cleanly,
+  so it was reverted. **Caveat found testing the reverted (floor-only)
+  config itself: the exact same never-arms symptom occurred once more,
+  on an otherwise-identical clean attempt, WITHOUT `EKF2_EV_NOISE_MD`
+  touched at all** — 3 of 4 total clean attempts on the final config
+  armed/flew/landed normally, 1 didn't. So `EKF2_EV_NOISE_MD=1` probably
+  wasn't uniquely responsible for the original failures either — there's
+  a separate, pre-existing, NOT-yet-root-caused flakiness in how
+  reliably EKF2/OpenVINS reach "estimator initialized" before arming at
+  all, independent of any param in this file. Given the original report
+  was inconsistent flight behavior across runs, this is plausibly the
+  more fundamental issue and the better next investigation target —
+  genuinely unresolved as of this entry, not silently patched over.
+- **Periodic checkerboard ground texture — a real aliasing trap.**
+  `vio_test.sdf`'s ground-level tile grid (added in the Milestone B
+  landing-divergence fix, issue-list context above) alternated exactly 2
+  shades in a strict checkerboard — every tile corner was locally
+  indistinguishable from every other, letting the KLT tracker/RANSAC
+  plausibly associate a feature with the WRONG grid corner as the vehicle
+  moved. Fixed by re-coloring the same 64 tiles (same positions/geometry,
+  zero missing-asset risk — still plain colored boxes, no texture file)
+  with a fixed, deterministic hash of each tile's grid indices across an
+  8-color palette instead of a 2-color alternation — no periodic pattern
+  left for a tracker to alias against, but still fully reproducible (not
+  literally randomized) since it's a checked-in world file.
+- **RViz2's `Image` display was a separate, UI-only bug, not a flight-
+  safety one** (OpenVINS subscribes to the camera topic directly — RViz
+  lag never touched the estimator) — see issue 26's `rqt-viewer` for the
+  camera feed's own DDS-bandwidth math corrected below. Root cause:
+  RViz's `Image` plugin uploads a fresh GPU texture on the same render
+  thread as the 3D view, and was a SECOND subscriber to the same raw
+  ~83 MB/s stream (1280×720 RGB8 @ 30Hz — `Vio_Drift_analysis.txt`'s own
+  estimate of ~27.6 MB/s used 1 byte/pixel instead of RGB8's 3; the real
+  number is roughly 3x that, if anything strengthening its conclusion).
+  Fixed by dropping RViz's `Image` display entirely (`quad.rviz`) —
+  `rviz2` is now TF/path only, `rqt-viewer` remains the camera viewer
+  (§4.3, §6).
+
+None of these three are proven to be the ONLY causes of the reported
+instability — re-test (`make mission MISSION=square
+LOCALIZATION=vision VIO_BACKEND=openvins`) multiple times, the same
+"looks right, verify live" discipline every VIO fix in this project has
+needed. `vio_test.sdf`/the d435i model are baked into the `px4-sim` image
+(`docker/Dockerfile.px4_sim` `COPY`s them at build time, not bind-mounted)
+— `make build` (or `docker compose --profile sim build px4-sim`) is
+required for the re-colored ground tiles to actually take effect, not
+just `make build-ws`.
+
+**29. Arming-reliability gap found verifying the 3 fixes above, then fully
+ROOT-CAUSED the same day — a SITL performance issue, not a code bug in
+this project, PX4, or OpenVINS.** Across 4 clean, fully-restarted flight
+attempts on the final (safe) config from issue 28, 3 armed/flew/landed
+the full `square` mission normally and 1 never armed in 260s, stuck on
+PX4's own "Preflight Fail: ekf2 missing data" / "waiting for estimator to
+initialize" (`EstimatorCheck.cpp`) — the identical symptom seen (and
+initially, incorrectly, attributed solely to `EKF2_EV_NOISE_MD=1`) before
+that param was reverted in issue 28, proving it wasn't uniquely
+responsible either.
+
+**A user-submitted analysis doc (`resource/Vio_Drift_analysis.txt`)
+proposed a wall-clock-vs-simulation-time ROS node clock mismatch
+(`use_sim_time`) as the cause. Investigated and rejected**, with evidence:
+`loopback_odometry_bridge.py` (Milestone A, reliable throughout this
+project's history) stamps `VehicleOdometry` with the exact same
+`self.get_clock().now()` (wall-clock) pattern `openvins_odometry_bridge.py`
+uses — if wall-clock stamping broke PX4/EKF2 fusion this badly, Milestone
+A would already be broken too. `docker-compose.gui.yml`'s `ros_gz_bridge`
+config bridges no `/clock` topic at all, so blindly setting
+`use_sim_time:=true` as proposed would have starved every node's ROS
+clock of a source — a real risk of making things worse, not better.
+
+**Actual root cause, traced through OpenVINS's own source and confirmed
+live**: `ROS2Visualizer::visualize_odometry()` (`ov_msckf`, not this
+project's code) unconditionally returns without publishing ANYTHING until
+`(timestamp - _app->initialized_time()) >= 1` — one full second of
+OpenVINS's own internal, Gazebo-simulation-derived time since
+initialization. Confirmed live during a stuck attempt:
+`gz topic -e -t /world/vio_test/stats` measured `real_time_factor: 0.023`
+(~1/44th of real time) — `gz sim` alone was consuming 448% CPU on an
+8-core host, load average >5. At that RTF, OpenVINS's 1-second (sim-time)
+gate needs ~44 REAL seconds just to start publishing, confirmed via
+`ros2 topic hz /fmu/in/vehicle_visual_odometry` showing ZERO messages
+across a full 250-second wall-clock window during a stuck run — easily
+exceeding any reasonable arm-retry patience, with nothing actually broken
+underneath (OpenVINS was healthy, still running ZUPT updates the whole
+time; the DDS graph showed the publisher and this project's subscriber
+correctly discovered with fully compatible QoS — the block is entirely
+inside OpenVINS's own gate, not a discovery race).
+
+**This is 100% specific to SITL** (Gazebo's lockstep simulated clock,
+confirmed via PX4 subscribing to `/world/<world>/clock` in
+`px4-rc.gzsim`) **and cannot recur on Phase 4 real hardware**, which has
+no simulated clock at all — OpenVINS there processes real camera frames
+in real wall-clock time. Given the original report was inconsistent
+flight-to-flight behavior, RTF variance under CPU load (worse when the
+host is already busy — e.g. from a long dev session with many
+`docker compose` restarts, as this one was) plausibly explains a real
+share of it directly, independent of the 3 fixes in issue 28.
+
+No code fix applied — this needs mitigation, not a patch, since the
+underlying mechanism (OpenVINS's 1-second gate) isn't this project's code
+to change (§11, no upstream forks). Options, not yet applied, roughly
+priority order:
+- Reduce simulation computational load: fewer/lighter `vio_test.sdf`
+  props, lower camera resolution/framerate (also serves issue 28's RViz
+  bandwidth fix — would need re-deriving `kalibr_imucam_chain.yaml`'s
+  intrinsics for the new resolution, a real recalibration, not just a
+  config edit), or reduce OpenVINS's `track_frequency`/`num_pts` if still
+  bottlenecked after that.
+- Test on a genuinely idle host — this session's 0.023 RTF was measured
+  after hours of continuous `docker compose` restarts/exec calls; a fresh
+  baseline (reboot, nothing else running) may be substantially better.
+- Don't assume "stuck" from a short timeout — check
+  `gz topic -e -t /world/<world>/stats`'s `real_time_factor` directly
+  before concluding something is broken; this is slowness, not a hang.
+
+Real stereo VIO (feeding the D435i's actual left/right IR pair instead of
+a single mono color camera, giving OpenVINS a static metric baseline
+instead of needing IMU excitation to observe scale at all) remains the
+next, larger step under consideration for the drift/scale side of
+instability — not yet implemented as of this entry. It would inherit this
+same RTF-dependent arming gap unchanged (OpenVINS's 1-second rule isn't
+mode-specific), so testing on a healthier-RTF host is worth doing before
+or alongside adding stereo, not strictly required first.
+
 ---
 
 ## 13. Repository Layout
@@ -1189,6 +1428,8 @@ ros2_ws/src/
                                    transport-agnostic autonomy.launch.py (Phase 2 ✓)
   common_perception/               Localization-source switch (GPS/vision, §8) + both VIO
                                    backends (loopback stand-in, real OpenVINS) (Phase 3 ✓)
+                                   + state_tf_publisher/viz.launch.py — RViz2 live TF/path
+                                   view, sim/hw-agnostic (§4.3, §12 issue 27)
   sim_bringup/                    Sim-only launch + params (sim_params.yaml) — includes
                                    autonomy.launch.py, no flight logic of its own (Phase 2.5 ✓)
   hw_bringup/                     Real-hardware bringup STUB — serial uXRCE-DDS agent +

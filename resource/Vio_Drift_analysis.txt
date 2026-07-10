@@ -1,0 +1,48 @@
+Review Notes: VIO Flight Stability & RViz Visualization Performance
+This document reviews the two critical issues identified during the square mission test:
+
+Localization Instability (High drift, hitting walls/fences)
+RViz Image View Lag/Freeze
+1. VIO Flight Accuracy & Stability
+Root Causes of Flight Instability & Drift
+A. Monocular VIO Scale Drift (Sim Environment Constraint)
+In the current setup, OpenVINS is configured in monocular mode (use_stereo: false, max_cameras: 1).
+
+The Issue: In monocular VIO, scale is mathematically unobservable when the camera is static or moving at a constant velocity without angular rotation. Scale must be continuously estimated through IMU excitation (acceleration and angular rate changes). Because the drone's mission is flown slowly and smoothly, the estimator is starved of IMU excitation, leading to scale drift. If the VIO scale factor drifts, EKF2's position estimate drifts, causing the drone to overshoot waypoints and hit boundaries.
+The Recommendation:
+In Simulation: Since the simulation uses a mono camera (d435i/model.sdf only models one color camera and one depth camera), we must live with monocular VIO. We can mitigate drift by ensuring the flight path contains enough direction changes and accelerations to excite the IMU (as done in Part 7 by increasing speed to 0.8 m/s).
+On Real Hardware (Crucial): You should absolutely switch to Stereo VIO mode (use_stereo: true, max_cameras: 2). The RealSense D435i is a stereo camera containing two infrared cameras (/camera/camera/infra1/image_rect_raw and /camera/camera/infra2/image_rect_raw). By feeding both IR streams and the IMU into OpenVINS, the camera's fixed physical baseline (~50 mm) provides direct, static scale observability. This completely eliminates scale drift, even during a stationary hover or slow cruise.
+B. Ground Feature Aliasing (Repetitive Checkerboard Texture)
+The Issue: In Part 7, a checkerboard ground plane was added to vio_test.sdf to solve feature starvation. However, checkerboards contain highly repetitive visual patterns. The KLT feature tracker (use_klt: true) or corner detector can easily associate features with the wrong grid corners as the drone moves (feature aliasing), causing sudden jumps or linear drift in the position estimate.
+The Recommendation: Replace the checkerboard with a high-entropy, non-repetitive, natural ground texture (e.g., a satellite image, grass, gravel, or asphalt texture). This provides unique visual features, preventing tracking mismatches.
+C. Moving Shadows
+The Issue: In Gazebo, the drone casts a dynamic shadow on the ground that moves with the drone. If the camera detects and tracks corners on this shadow, the VIO filter will be tricked into believing the drone is stationary (or moving in reverse/sideways relative to the shadow's shape change), leading to massive drift.
+The Recommendation: Ensure the ground plane texture has high-contrast features that dominate the shadow, or temporarily disable directional light shadows in the simulation world file (vio_test.sdf) to verify if shadows are biasing the tracker.
+D. Covariance Passthrough vs. EKF2 Noise Param Overrides
+The Issue: openvins_odometry_bridge.py passes the raw covariance matrix calculated by OpenVINS directly to PX4 (out.position_variance = [pc[0], pc[7], pc[14]]). In practice, VIO-reported covariance is often overly optimistic (the filter thinks it knows its position within centimeters, but the actual drift is meters). When EKF2 receives an overly optimistic covariance, it trusts VIO over its own IMU and physics models, leading to EKF filter resets and erratic control.
+The Recommendation: Do not pass the raw OpenVINS covariance directly to PX4. Instead, override and tune PX4's internal EKF2 vision noise parameters:
+Set EKF2_EVP_NOISE (position noise) and EKF2_EVV_NOISE (velocity noise) to fixed, conservative values (e.g., 0.1 m and 0.05 m/s). This ensures stable, predictable EKF2 fusion that is robust to transient VIO estimator errors.
+E. Hardware Calibration
+The Issue: While the simulation uses hand-derived calibration matrices matching Gazebo's perfect pinhole math, real hardware is subject to lens distortion, manufacturing tolerances, and sensor misalignment.
+The Recommendation: For Phase 4 hardware tests, never use default calibration values. You must run a formal camera-IMU calibration tool (like Kalibr) on the real D435i to generate precise camera intrinsics, distortion coefficients, IMU noise density, and camera-to-IMU extrinsics ($T_{cam_imu}$).
+2. RViz Image View Lag & Freeze
+The Root Cause
+A raw 1280x720 RGB image at 30 Hz represents a massive data rate: $$\text{Data Rate} = 1280 \times 720 \text{ pixels} \times 3 \text{ bytes/pixel} \times 30 \text{ Hz} \approx 27.6 \text{ MB/s} \approx 221 \text{ Mbps}$$ With ros_gz_bridge publishing this raw stream over DDS to multiple subscribers (OpenVINS, RViz, and potentially rqt_image_view):
+
+The CPU overhead of copying these large memory buffers through the DDS middleware (CycloneDDS) causes packet drops and latency.
+RViz2 uses a heavy 3D rendering engine (Ogre). Renders of large raw 2D images in the 3D GUI thread frequently block, causing the image display to freeze or lag behind the actual TF/path updates.
+Actionable Recommendations
+Use rqt_image_view for Image Feeds (Highly Recommended)
+
+Confirming your intuition: Yes, it is much better to use rqt_image_view for the camera feed and use RViz2 solely for 3D spatial data (TFs, coordinate frames, vehicle path, VIO odometry covariance).
+In docker-compose.gui.yml, the rqt-viewer service is already configured to run rqt_image_view /camera/camera/color/image_raw. Keep using this setup and disable the Image Display plugin in the RViz config (quad.rviz) to free up rendering threads.
+Downsample the Image Resolution and Framerate (Simulation & Hardware)
+
+There is no benefit to running VIO or visualization on a full 1280x720@30Hz stream. It is a waste of CPU cycles and DDS bandwidth.
+In Simulation: Modify d435i/model.sdf to publish at 640x480 (or 848x480) at 15 Hz or 20 Hz. This reduces the data footprint by over 70% (down to ~8 MB/s), drastically lowering CPU load and solving the lag.
+On Real Hardware: Configure the realsense-ros node parameters to publish infra1 and infra2 streams at 848x480 (or 640x480) at 15 or 30 Hz.
+Use Compressed Image Transport
+
+If you need to visualize the camera feed on a remote machine (e.g., your development laptop visualizing the real-time flight of the physical Orange Pi drone over Wi-Fi), never stream raw images.
+Use the image_transport package to publish a compressed topic (e.g., /camera/camera/color/image_raw/compressed using JPEG compression) which reduces bandwidth requirements to a few megabits per second.
+

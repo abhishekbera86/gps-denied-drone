@@ -5,7 +5,8 @@
   <version>0.1.0</version>
   <description>
     Localization-source selection (GPS vs vision) and the VIO odometry
-    pipeline that feeds PX4's EKF2 external-vision fusion. Sensor-agnostic:
+    pipeline that feeds PX4's EKF2 external-vision fusion, plus the
+    state_tf_publisher/RViz2 live-visualization stack. Sensor-agnostic:
     common_control/common_missions never know which source is active.
     Identical in sim and on real hardware.
   </description>
@@ -15,8 +16,11 @@
   <depend>rclpy</depend>
   <depend>px4_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <exec_depend>ros2launch</exec_depend>
+  <exec_depend>rviz2</exec_depend>
 
   <!-- ov_msckf (OpenVINS) and ros_gz_bridge are Milestone B run-time deps,
        built/installed into separate underlay workspaces in the Docker image

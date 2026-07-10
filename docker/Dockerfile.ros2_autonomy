@@ -117,6 +117,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-rqt-image-view \
     && rm -rf /var/lib/apt/lists/*
 
+# ── RViz2 + tf2_ros (live pose/TF/path view, GUI mode only) ────────────────
+# Same "baked in, starts instantly" reasoning as rqt_image_view above —
+# docker-compose.gui.yml's rviz2 service needs both present the moment it
+# starts. `ros:humble-ros-base` (this image's FROM) is the minimal Humble
+# variant and ships neither GUI tools (rviz2) nor tf2_ros itself.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-rviz2 ros-humble-tf2-ros \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
     && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc \
     && echo "source /opt/openvins_ws/install/setup.bash" >> /root/.bashrc

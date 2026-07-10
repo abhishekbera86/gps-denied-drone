@@ -28,6 +28,20 @@
 # might never see a single frame. No GPU rendering needed for a 2D image
 # widget, so this doesn't need LIBGL_ALWAYS_SOFTWARE/GZ_SW_RENDER — only
 # Gazebo's 3D view does.
+#
+# Also starts `rviz2` (common_perception/launch/viz.launch.py) — RViz2 plus
+# the state_tf_publisher node, showing the vehicle's live TF (`odom` ->
+# `base_link`) and its actually-flown path (`/drone/path`). Same "up from
+# the start" reasoning as rqt-viewer: state_tf_publisher subscribes to
+# /fmu/out/vehicle_odometry, which PX4 publishes as soon as its estimator
+# initializes — well before any mission exists — so starting it early means
+# RViz shows the vehicle's pose immediately and keeps showing it across
+# multiple mission runs (it is NOT part of autonomy.launch.py's
+# mission-scoped on_exit=Shutdown()). Unlike rqt-viewer, this DOES need
+# real GL rendering (RViz's 3D view) — same DISPLAY/DRI passthrough as
+# px4-sim's Gazebo GUI. Deliberately does NOT also show the camera image —
+# see viz.launch.py's docstring for why RViz's Image display was dropped
+# in favor of rqt-viewer alone (resource/Vio_Drift_analysis.txt).
 # =============================================================================
 
 services:
@@ -70,4 +84,39 @@ services:
     # doesn't need the DDS agent at all — only rqt_image_view.
     entrypoint: []
     command: bash -c "source /opt/ros/humble/setup.bash && exec ros2 run rqt_image_view rqt_image_view /camera/camera/color/image_raw"
+    profiles: [sim]
+
+  rviz2:
+    image: quad/ros2-autonomy:humble
+    container_name: rviz2
+    network_mode: host
+    environment:
+      DISPLAY: "${DISPLAY:-:0}"
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: "${GZ_SW_RENDER:-0}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # common_perception (viz.launch.py, state_tf_publisher, quad.rviz) is
+      # bind-mounted and colcon-built into the shared build-cache volume —
+      # same as ros2-autonomy — not baked into the image, so this container
+      # needs both to actually run `ros2 launch common_perception ...`.
+      - ./ros2_ws:/ros2_ws:rw
+      - colcon_build_cache:/ros2_ws_build
+    devices:
+      - /dev/dri:/dev/dri
+    depends_on:
+      - ros2-autonomy
+    # See rqt-viewer's comment above: the base image's ENTRYPOINT starts a
+    # second Micro-XRCE-DDS-Agent, which would conflict with ros2-autonomy's
+    # over the shared host-network DDS port. RViz/state_tf_publisher only
+    # need the DDS agent that's already running there.
+    entrypoint: []
+    command: >
+      bash -c "
+      test -f /ros2_ws_build/install/setup.bash || { echo 'Workspace not built yet — run: make build-ws'; exit 1; };
+      source /opt/ros/humble/setup.bash &&
+      source /opt/px4_ros2_ws/install/setup.bash &&
+      source /ros2_ws_build/install/setup.bash &&
+      exec ros2 launch common_perception viz.launch.py"
     profiles: [sim]

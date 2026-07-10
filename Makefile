@@ -47,7 +47,7 @@ help:
 	@echo "  ║    make sim         Start PX4 SITL + ROS 2    ║"
 	@echo "  ║      PX4_GZ_WORLD=empty|vio_test (default     ║"
 	@echo "  ║        empty; vio_test for VIO_BACKEND=openvins) ║"
-	@echo "  ║    make sim-gui     + Gazebo GUI + cam preview ║"
+	@echo "  ║    make sim-gui     + Gazebo GUI + cam + RViz2 ║"
 	@echo "  ║    make flight-test Fly takeoff-hover-land    ║"
 	@echo "  ║    make mission     Fly MISSION=square         ║"
 	@echo "  ║      LOCALIZATION=gps|vision (default gps)    ║"
@@ -84,20 +84,35 @@ sim:
 # you can WATCH the drone fly, PLUS a live rqt_image_view window subscribed
 # to /camera/camera/color/image_raw from the start (see docker-compose.gui.
 # yml's header comment for why it starts now rather than being launched
-# manually per mission — a sequencing race with camera_imu_bridge). Layers
-# docker-compose.gui.yml (HEADLESS=0 + X11/DRI passthrough for both
-# windows). Needs an X session (DISPLAY set). If a window is black or gz
-# crashes on the GPU, retry with software rendering:
+# manually per mission — a sequencing race with camera_imu_bridge), PLUS an
+# RViz2 window (state_tf_publisher + common_perception/launch/viz.launch.py)
+# showing the vehicle's live TF and its actually-flown path (/drone/path) —
+# TF/path only, deliberately no camera image in RViz (see viz.launch.py's
+# docstring — RViz's Image plugin double-subscribing the same high-
+# bandwidth stream as rqt-viewer was visibly laggy, a real bug found and
+# fixed 2026-07-10, resource/Vio_Drift_analysis.txt). RViz2's TF/path
+# appear immediately (PX4 publishes /fmu/out/vehicle_odometry as soon as
+# its estimator initializes, no mission needed); rqt-viewer's image stays
+# blank until a VIO mission (localization_source:=vision
+# vio_backend:=openvins) is actually flying. The rviz2 container runs
+# common_perception (bind-mounted, colcon-built)
+# rather than a baked-in apt package, so `make build-ws` must have run at
+# least once before `make sim-gui` or that container exits immediately with
+# a "Workspace not built yet" message (check: make ps / make logs).
+# Layers docker-compose.gui.yml (HEADLESS=0 + X11/DRI passthrough for all
+# three windows). Needs an X session (DISPLAY set). If a window is black or
+# gz crashes on the GPU, retry with software rendering:
 #   GZ_SW_RENDER=1 make sim-gui
 sim-gui:
 	@echo "==> Starting px4-sim WITH Gazebo GUI (world=${PX4_GZ_WORLD}, DISPLAY=$${DISPLAY:-:0})..."
 	@xhost +local:root >/dev/null 2>&1 || echo "  ! xhost not available — GUI may be denied X access"
 	@docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile sim up -d
 	@echo ""
-	@echo "  ✓ Containers up. The Gazebo Harmonic window and an rqt_image_view"
-	@echo "    camera preview should both open shortly (the camera preview stays"
-	@echo "    blank/black until a VIO mission — localization_source:=vision"
-	@echo "    vio_backend:=openvins — is actually flying and publishing)."
+	@echo "  ✓ Containers up. The Gazebo Harmonic window, an rqt_image_view"
+	@echo "    camera preview, and an RViz2 window (TF + path only) should all"
+	@echo "    open shortly (rqt_image_view stays blank/black until a VIO"
+	@echo "    mission — localization_source:=vision vio_backend:=openvins —"
+	@echo "    is actually flying and publishing)."
 	@echo "    (First boot takes ~20-40 s. Watch it:   make logs)"
 	@echo "    Then, in another terminal:   make flight-test   or   make mission"
 	@echo ""

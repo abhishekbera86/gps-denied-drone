@@ -23,7 +23,14 @@ _FRD_FLU_Q: Quat = (0.0, 1.0, 0.0, 0.0)
 
 
 def enu_to_ned(v: Vec3) -> Vec3:
-    """Convert an ENU (East, North, Up) vector to NED (North, East, Down)."""
+    """Convert an ENU (East, North, Up) vector to NED (North, East, Down).
+
+    This swap-first-two/negate-third axis remap is its own inverse (applying
+    it to a NED/FRD vector yields ENU/FLU), since it only ever permutes/
+    negates positions 0/1/2 — it never inspects which convention the input
+    is actually in. `state_tf_publisher.py` relies on this to go NED->ENU
+    with the same function, rather than a near-duplicate `ned_to_enu`.
+    """
     east, north, up = v
     return (north, east, -up)
 
@@ -82,5 +89,12 @@ def flu_enu_to_frd_ned_quaternion(q_flu_enu: Quat) -> Quat:
     """Convert a body(FLU)-to-world(ENU) quaternion to body(FRD)-to-world(NED).
 
     Hamilton (w, x, y, z) in both directions, matching `VehicleOdometry.msg`.
+
+    Also its own inverse: `_NED_ENU_Q`/`_FRD_FLU_Q` are each 180-degree
+    rotations, so as quaternion VALUES they satisfy Q*Q = -identity — but
+    -identity and +identity represent the SAME rotation, and the two sign
+    flips from substituting Q for Q^-1 on both sides of the product cancel
+    exactly. So this same function converts FRD/NED -> FLU/ENU too, which
+    `state_tf_publisher.py` relies on instead of a near-duplicate inverse.
     """
     return _quat_mul(_quat_mul(_NED_ENU_Q, q_flu_enu), _FRD_FLU_Q)

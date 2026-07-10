@@ -14,7 +14,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config'),
+            glob('config/*.yaml') + glob('config/*.rviz')),
         (os.path.join('share', package_name, 'config', 'openvins'),
             glob('config/openvins/*.yaml')),
     ],
@@ -30,6 +31,7 @@ setup(
             'set_localization_source = common_perception.set_localization_source:main',
             'loopback_odometry_bridge = common_perception.loopback_odometry_bridge:main',
             'openvins_odometry_bridge = common_perception.openvins_odometry_bridge:main',
+            'state_tf_publisher = common_perception.state_tf_publisher:main',
         ],
     },
 )
