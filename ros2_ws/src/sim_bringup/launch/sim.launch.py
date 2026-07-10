@@ -40,6 +40,7 @@ from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
     RegisterEventHandler,
+    Shutdown,
 )
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -47,49 +48,81 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def _after_localization_source_set(event, context):
-    """Start the mission (and, for vision, the fake-VIO loopback bridge)
-    only after the localization-source switch confirms — never on failure.
-    """
-    if event.returncode != 0:
-        return None
-
+def _autonomy_include():
     autonomy_launch = os.path.join(
         get_package_share_directory('common_missions'), 'launch', 'autonomy.launch.py')
     sim_params = os.path.join(
         get_package_share_directory('sim_bringup'), 'config', 'sim_params.yaml')
+    return IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(autonomy_launch),
+        launch_arguments={
+            'action': LaunchConfiguration('action'),
+            'mission': LaunchConfiguration('mission'),
+            'params_file': sim_params,
+        }.items(),
+    )
 
-    actions = [
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(autonomy_launch),
-            launch_arguments={
-                'action': LaunchConfiguration('action'),
-                'mission': LaunchConfiguration('mission'),
-                'params_file': sim_params,
-            }.items(),
-        ),
-    ]
 
-    if LaunchConfiguration('localization_source').perform(context) == 'vision':
-        vio_backend = LaunchConfiguration('vio_backend').perform(context)
-        if vio_backend == 'openvins':
-            # Milestone B: real VIO — camera/IMU bridge + OpenVINS + the
-            # real odometry bridge, all in one included launch file.
-            vio_launch = os.path.join(
-                get_package_share_directory('common_perception'), 'launch', 'vio.launch.py')
-            actions.append(IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(vio_launch)))
-        else:
-            # Milestone A (default): no camera/OpenVINS needed — loop PX4's
-            # own estimate back in as a stand-in, proving the whole
-            # switch+EKF2+bridge mechanism works before real VIO is added.
-            actions.append(Node(
-                package='common_perception',
-                executable='loopback_odometry_bridge',
-                output='screen',
-            ))
+def _after_localization_source_set(event, context):
+    """Start the mission only after the localization-source switch confirms
+    — never on failure.
 
-    return actions
+    GPS: the mission starts immediately (GPS is fused from PX4 boot).
+
+    Vision: the VIO pipeline and the mission both start now. There is
+    deliberately NO "wait for vision data before arming" gate here, and one
+    must not be re-added in this shape: it was built and then REMOVED the
+    same day (2026-07-10) after being confirmed live as a structural
+    DEADLOCK — this OpenVINS version publishes NOTHING while the vehicle is
+    parked (its `initialized()` requires a real feature update, but every
+    parked frame takes the pre-takeoff ZUPT early-return, so all its
+    publishers stay gated until first physical motion; verified in
+    VioManager.cpp/VioManager.h and live on multiple boots). So: gate
+    waits for vision -> vision waits for motion -> motion waits for arming
+    -> arming waits for gate. Vision data instead appears within ~a second
+    of first takeoff motion, which is how every working openvins flight in
+    this project has actually flown. The planned (not yet built) safety
+    net for "vision never came up at all" — a real risk, confirmed live
+    once via a world-texture bug: armed and wandered 125 s with no
+    localization until the geofence caught it — is an IN-FLIGHT watchdog
+    in common_control (abort to LAND if no vision within seconds of
+    arming, or if it stops mid-flight), not a pre-arm gate. See
+    common_perception/wait_for_vision.py (kept for that future use) and
+    README §12 issue 30.
+
+    Failure of the switch returns Shutdown(), never None: returning None
+    leaves an already-started VIO pipeline (which has no exit condition of
+    its own) running in the launch FOREVER — confirmed live (2026-07-10):
+    an orphaned odometry bridge from exactly that path contaminated the
+    next diagnostic session in the same container — the part-9 leftover-
+    process failure class, reachable through launch-sequencing this time.
+    """
+    if event.returncode != 0:
+        return [Shutdown(
+            reason='localization-source switch failed — shutting down (see log above)')]
+
+    if LaunchConfiguration('localization_source').perform(context) != 'vision':
+        return [_autonomy_include()]
+
+    vio_backend = LaunchConfiguration('vio_backend').perform(context)
+    if vio_backend == 'openvins':
+        # Milestone B: real VIO — camera/IMU bridge + OpenVINS + the
+        # real odometry bridge, all in one included launch file.
+        vio_launch = os.path.join(
+            get_package_share_directory('common_perception'), 'launch', 'vio.launch.py')
+        vio_actions = [IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(vio_launch))]
+    else:
+        # Milestone A (default): no camera/OpenVINS needed — loop PX4's
+        # own estimate back in as a stand-in, proving the whole
+        # switch+EKF2+bridge mechanism works before real VIO is added.
+        vio_actions = [Node(
+            package='common_perception',
+            executable='loopback_odometry_bridge',
+            output='screen',
+        )]
+
+    return vio_actions + [_autonomy_include()]
 
 
 def generate_launch_description():

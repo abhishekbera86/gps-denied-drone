@@ -74,7 +74,15 @@ def quat_rotate_vector(q: Quat, v: Vec3) -> Vec3:
     )
 
 
-def _quat_mul(a: Quat, b: Quat) -> Quat:
+def quat_mul(a: Quat, b: Quat) -> Quat:
+    """Hamilton product a*b, both (w, x, y, z) body-to-world quaternions.
+
+    Composition order matters: for chained frames, a child frame's rotation
+    relative to its parent composes on the RIGHT (q_world_child =
+    q_world_parent * q_parent_child) — relied on by
+    openvins_odometry_bridge.py's camera-mount compensation and verified
+    numerically there (see its mount-compensation comment).
+    """
     aw, ax, ay, az = a
     bw, bx, by, bz = b
     return (
@@ -83,6 +91,16 @@ def _quat_mul(a: Quat, b: Quat) -> Quat:
         aw * by - ax * bz + ay * bw + az * bx,
         aw * bz + ax * by - ay * bx + az * bw,
     )
+
+
+# Backwards-compatible private alias (flu_enu_to_frd_ned_quaternion below
+# predates quat_mul being public API).
+_quat_mul = quat_mul
+
+
+def quat_conjugate(q: Quat) -> Quat:
+    """Conjugate of a Hamilton (w, x, y, z) quaternion (= inverse for unit q)."""
+    return (q[0], -q[1], -q[2], -q[3])
 
 
 def flu_enu_to_frd_ned_quaternion(q_flu_enu: Quat) -> Quat:

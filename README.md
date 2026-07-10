@@ -453,6 +453,7 @@ syntax) or as an environment variable before it.
 | `make sim-gui` | `PX4_GZ_WORLD=` (same as above) · `GZ_SW_RENDER=1` *(optional)* — forces software (llvmpipe) rendering if the GPU path fails | Same stack as `make sim`, but with the real Gazebo GUI window forwarded to the host X display, plus `rqt-viewer` (live `/camera/camera/color/image_raw` preview) and `rviz2` (live TF + flown path only, §4.3) — both up from the start so neither can lose the sequencing race against a mission's camera bridge. `rviz2` needs `make build-ws` to have run at least once. **Always pass `PX4_GZ_WORLD` on the command line, never edit it into `.env`** — see §12 issue 19. |
 | `make flight-test` | `LOCALIZATION=gps` *(default)* or `vision` · `VIO_BACKEND=loopback` *(default)* or `openvins` (only when `LOCALIZATION=vision`, and only with `PX4_GZ_WORLD=vio_test` — §8) | Flies the hover test (arm → takeoff → hover → land) via `sim_bringup`. Requires `make build-ws` first. |
 | `make mission` | `MISSION=square` *(default, and currently the only mission)* · `LOCALIZATION=` / `VIO_BACKEND=` (same as above) | Flies the named waypoint mission via `sim_bringup`. Requires `make build-ws` first. |
+| `make drift-report` | — | Prints Gazebo's ground-truth vehicle pose AND PX4's position estimate side by side. Run once before a mission (baseline) and once after landing: physical return error = truth(after)−truth(before); estimate residual = estimate(after)−estimate(before). Frames differ (Gazebo world vs PX4 NED) — compare each source against its own baseline only. |
 | `make gz-resync` | — | Fallback: forces the Gazebo GUI to rebroadcast its full scene, for the rare case the drone doesn't appear in the GUI's 3D view (§4.3, §12 issue 20). No effect on headless mode. |
 | `make shell` | — | Opens a bash shell inside `ros2-autonomy` (the ROS 2 / DDS-bridge container). |
 | `make shell-px4` | — | Opens a bash shell inside `px4-sim` (the PX4 flight-controller container). |
@@ -1401,6 +1402,73 @@ instability — not yet implemented as of this entry. It would inherit this
 same RTF-dependent arming gap unchanged (OpenVINS's 1-second rule isn't
 mode-specific), so testing on a healthier-RTF host is worth doing before
 or alongside adding stereo, not strictly required first.
+
+**30. The 30° camera-tilt milestone (2026-07-10, second half) — five
+stacked root causes found and fixed; the tilted rig takes off and runs
+VIO in flight, but its first real flight DIVERGED ~84 m (OPEN — the rig
+is NOT flight-ready; do not start the 5-run accuracy procedure yet).**
+Condensed here — the full blow-by-blow with evidence is
+`DEVELOPMENT_STATUS.md` part 14 (local only). In causal order:
+
+- **Issue 29 superseded: the RTF collapse was the headless `px4-sim`
+  container having NO GPU access.** The base `docker-compose.yml` service
+  never mapped `/dev/dri` (only the GUI overlay did), so both simulated
+  cameras software-rendered on CPU. Adding it: RTF 0.015 → **1.00**, `gz
+  sim` CPU 416% → 178%. Issue 29's "idle host" advice is obsolete — the
+  host was never the bottleneck. **Portability caveat (real, accepted):
+  `/dev/dri` in the base service makes GPU render nodes mandatory to
+  start the stack — on a GPU-less VM/server, `docker compose up` fails
+  with a device error; comment the `devices:` block out there (headless
+  CI without VIO missions doesn't need camera rendering speed).**
+- **The tilted camera view at ground level had ~5 FAST corners at
+  OpenVINS's threshold of 30 (needs 15+ to initialize)** — measured with
+  cv2 on real captured frames. Two stacked causes, both fixed in
+  `vio_test.sdf`: the vehicle's own sun shadow blanketing the near field
+  (shadows now off — a controlled-test-world decision, real-shadow
+  robustness is Phase 4's problem), and solid-color tiles only producing
+  corners at 3-color junctions (replaced 128 tile entities with ONE 8×8 m
+  pad textured by `textures/vio_ground_mosaic.png`, a seeded multi-scale
+  mosaic with a checked-in generator — 260 corners after, ground init
+  reliable). Requires `make build` (world+texture bake into the image).
+- **OpenVINS structurally publishes NOTHING while parked**: its
+  `initialized()` gate needs one real feature update, but every parked
+  frame exits early through the pre-takeoff ZUPT hold — so vision odometry
+  cannot exist until first physical motion (verified in its source and
+  live). This is the deeper mechanism behind issue 29's arming coin-flip,
+  and it makes any pre-arm "wait for vision data" gate a structural
+  deadlock — one was built this session and removed the same day
+  (`common_perception/wait_for_vision.py` remains for the planned
+  in-flight watchdog instead).
+- **At real-time RTF that no-vision-while-parked window broke takeoff
+  entirely**: EKF2 (GPS off) dead-reckons until vision arrives;
+  its validity window `EKF2_NOAID_TOUT` defaults to 5 s — at the old
+  0.02 RTF that was ~4 wall-minutes, at RTF 1.0 it's a real 5 s and
+  arming+takeoff no longer fit (PX4: "invalid setpoints" → "Failsafe:
+  blind land"; the vehicle never physically lifted while the mission log
+  claimed "climbing"). `set_localization_source.py` now sets
+  `EKF2_NOAID_TOUT` to its allowed max (10 s) on the vision switch (§8),
+  restoring the default for gps mode.
+- **With all four fixed, the first genuine tilted flight armed, lifted
+  off, and ran OpenVINS in flight — then diverged**: the estimate flew
+  the commanded square (mission "completed", geofence silent — it reads
+  the estimate) while the physical vehicle traveled ~84 m and tumbled.
+  The new mount compensation in `openvins_odometry_bridge.py` is
+  **exonerated** — validated numerically before flight and re-validated
+  after the crash against OpenVINS's own parked init attitude (raw =
+  exactly 30° pitch, compensated = exactly level, flipped = 60°). Open
+  suspects, next session: mono-VIO divergence under flight dynamics
+  aggravated by the measured ~13 Hz *effective* camera rate (30 Hz
+  configured — the Haswell iGPU can't render both cameras at full rate);
+  online intrinsics/timeoffset calibration drifting at low frame rate
+  (this project has prior form — the extrinsics saga); EV frame alignment
+  in EKF2.
+
+Also added this session: `make drift-report` (prints Gazebo ground-truth
+pose AND PX4's estimate; run before a mission and after landing, compare
+each source to its own baseline — frames differ, never compare truth
+directly to estimate) — this is the measurement tool for the eventual
+5-run accuracy acceptance test, which **must wait until the divergence
+above is resolved**.
 
 ---
 

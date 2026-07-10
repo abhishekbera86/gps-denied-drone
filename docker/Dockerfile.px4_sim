@@ -70,6 +70,12 @@ COPY docker/px4_sitl_worlds/empty.sdf \
 COPY docker/px4_sitl_worlds/vio_test.sdf \
      Tools/simulation/gz/worlds/vio_test.sdf
 
+# Ground texture for vio_test's textured pad (vio_ground_mosaic.png — a
+# seeded, reproducible multi-scale mosaic; see its generator script next to
+# it). vio_test.sdf references it by this exact absolute in-image path.
+COPY docker/px4_sitl_worlds/textures \
+     Tools/simulation/gz/worlds/textures
+
 # Repo-owned overlay MODELS (same never-fork-upstream overlay mechanism as
 # the airframe .post and worlds above, applied to models instead): swap
 # x500_depth's camera package from the stock OakD-Lite to our own local

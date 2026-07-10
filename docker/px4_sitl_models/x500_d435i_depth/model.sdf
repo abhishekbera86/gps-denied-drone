@@ -15,18 +15,53 @@
     changes. Never edit PX4-Autopilot's own checkout — edit this file and
     rebuild (`docker compose build px4-sim`).
   -->
+  <!--
+    CAMERA MOUNT TILT (2026-07-10): the d435i is mounted pitched DOWN 30
+    degrees (0.523599 rad about +Y in the body FLU frame — positive pitch
+    = nose-down in SDF rpy). Standard multirotor-VIO practice, adopted
+    here after the forward (0-degree) mount was implicated in two real,
+    confirmed failure modes: ground feature starvation during
+    descent/landing (the AUTO_LAND divergence incident — fence prop tops
+    exit the color camera's 42-degree vertical FOV at low altitude,
+    leaving only untextured ground) and weak near-field parallax for
+    mono-VIO scale observability. With 30 degrees of tilt the top edge of
+    the color FOV sits 9 degrees below the horizon (42/2 = 21-degree
+    half-FOV), keeping textured ground in view from ground level through
+    cruise (at 2m altitude: ground visible ~1.6m to ~12.6m ahead) to
+    touchdown.
+
+    THREE THINGS THIS TILT DOES **NOT** CHANGE — all verified reasoning,
+    documented here to prevent a well-meaning future "fix":
+      1. kalibr_imucam_chain.yaml's T_cam_imu: the d435i model co-locates
+         its IMU with the color sensor ON THE SAME LINK (as the real
+         D435i does — the IMU is inside the housing). Tilting the mount
+         rotates camera AND IMU together, so their RELATIVE transform is
+         invariant. An external analysis doc proposed rotating T_cam_imu
+         by the mount angle — that derivation assumes a body-mounted
+         (flight-controller) IMU and is WRONG for this rig; applying it
+         would deliberately re-introduce the Milestone B extrinsics-error
+         failure class.
+      2. EKF2_EV_POS_X/Y/Z (set_localization_source.py): the tilt is a
+         rotation about the sensor origin; the mount TRANSLATION
+         (.12/.03/.242) is unchanged.
+      3. The d435i model itself: the tilt lives HERE, in the mount —
+         matching how the physical Phase 4 bracket will hold a straight
+         camera at an angle. Keep the angle here in sync with
+         vio.launch.py's mount_pitch_deg (the odometry bridge compensates
+         the reported attitude by this same angle).
+  -->
   <model name='x500_depth'>
     <include merge='true'>
       <uri>x500</uri>
     </include>
     <include merge='true'>
       <uri>model://d435i</uri>
-      <pose>.12 .03 .242 0 0 0</pose>
+      <pose>.12 .03 .242 0 0.523599 0</pose>
     </include>
     <joint name="CameraJoint" type="fixed">
       <parent>base_link</parent>
       <child>camera_link</child>
-      <pose relative_to="base_link">.12 .03 .242 0 0 0</pose>
+      <pose relative_to="base_link">.12 .03 .242 0 0.523599 0</pose>
     </joint>
   </model>
 </sdf>

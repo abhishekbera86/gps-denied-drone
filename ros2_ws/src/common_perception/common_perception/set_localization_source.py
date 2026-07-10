@@ -123,10 +123,31 @@ SOURCES = {
     'gps': {
         'EKF2_GPS_CTRL': 7,  # HPOS + VPOS + VEL (PX4's own default)
         'EKF2_EV_CTRL': 0,   # vision fusion off
+        'EKF2_NOAID_TOUT': 5000000,   # PX4 default (restore if switching back)
     },
     'vision': {
         'EKF2_GPS_CTRL': 0,  # GPS fusion off — height falls back to baro
         'EKF2_EV_CTRL': 5,   # HPOS + VEL from vision; yaw stays on mag/gyro
+        # Maximum inertial dead-reckoning time (us) before EKF2 declares the
+        # horizontal solution invalid — raised from the 5s default to the
+        # PX4-allowed MAX (10s) for the vision path, because vision-from-
+        # the-ground has an unavoidable no-aiding gap: this OpenVINS version
+        # publishes NOTHING while the vehicle is parked (pre-takeoff ZUPT
+        # hold gates all its publishers until the first real feature update
+        # — confirmed in its source and live, see README §12 issue 30), so
+        # between "GPS off" and "first takeoff motion" EKF2 is dead-
+        # reckoning on IMU+baro alone. At the old ~0.02 real-time factor
+        # this 5s (SIM-time) window lasted ~4 wall-clock minutes and
+        # everything appeared to work; at the fixed RTF 1.0 the window is a
+        # real 5 seconds, and arming+takeoff didn't fit — confirmed live:
+        # mc_pos_control logged "invalid setpoints" then "Failsafe: blind
+        # land", motors got a grounded failsafe profile instead of the
+        # climb, and the vehicle never physically lifted (Gazebo truth
+        # static the whole run). 10s fits the measured arm->liftoff->
+        # first-vision sequence (~3-8s) with margin; the in-flight geofence
+        # plus the planned vision watchdog bound the exposure of trusting
+        # dead-reckoning that long.
+        'EKF2_NOAID_TOUT': 10000000,
     },
 }
 

@@ -16,6 +16,18 @@ Starts three pieces, in order they're declared (no strict sequencing needed
      `/fmu/in/vehicle_visual_odometry`, the same topic the Milestone A
      `loopback_odometry_bridge` uses (drop-in replacement).
 
+Arguments:
+  mount_pitch_deg (default 30.0) — how far the d435i mount is pitched DOWN
+     from body-forward. MUST match the physical mount: in sim that is the
+     `0.523599` rad pitch in `docker/px4_sitl_models/x500_d435i_depth/
+     model.sdf` (change one, change both — there is no shared source of
+     truth between an SDF baked into the px4-sim image and a ROS launch
+     arg, so this comment is the coupling). The odometry bridge uses it to
+     rotate OpenVINS's tilted-frame attitude/gyro back to the vehicle body
+     frame; kalibr_imucam_chain.yaml is NOT part of this coupling (the
+     camera's own IMU tilts with it — their relative transform is
+     mount-invariant, see the SDF comment).
+
 Included by `sim_bringup/launch/sim.launch.py` when `localization_source:=vision`
 and Milestone B is selected — see
 resource/phase3-gps-denied-localization-source.md.
@@ -25,9 +37,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -40,6 +54,10 @@ def generate_launch_description():
         get_package_share_directory('ov_msckf'), 'launch', 'subscribe.launch.py')
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'mount_pitch_deg', default_value='30.0',
+            description='Camera mount pitch-down angle (deg) — must match '
+                        'x500_d435i_depth/model.sdf (sim) / the physical bracket (hw)'),
         Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -60,5 +78,10 @@ def generate_launch_description():
             package='common_perception',
             executable='openvins_odometry_bridge',
             output='screen',
+            # ParameterValue(..., value_type=float): a bare LaunchConfiguration
+            # resolves to a STRING, which ROS rejects against the node's
+            # declared-double parameter at startup.
+            parameters=[{'mount_pitch_deg': ParameterValue(
+                LaunchConfiguration('mount_pitch_deg'), value_type=float)}],
         ),
     ])

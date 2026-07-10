@@ -59,6 +59,17 @@ services:
       # props for monocular VIO feature tracking). See
       # resource/phase3-gps-denied-localization-source.md.
       PX4_GZ_WORLD: "${PX4_GZ_WORLD:-empty}"
+    devices:
+      # GPU render nodes for the SIMULATED CAMERA SENSORS, not for any
+      # window: even fully headless, Gazebo renders the d435i's color+depth
+      # camera streams every sim frame, and without /dev/dri that rendering
+      # falls back to CPU software rasterization — measured live
+      # (2026-07-10) as the dominant real-time-factor killer on this stack
+      # (RTF ~0.015 with gz sim pinned >400% CPU on an otherwise idle
+      # 8-core host; see README §12 issue 29/30). The GUI overlay
+      # (docker-compose.gui.yml) always had this mapping — the headless
+      # base was the only place missing it.
+      - /dev/dri:/dev/dri
     profiles: [sim]
 
   # ── ROS 2 Humble + PX4 uXRCE-DDS bridge ───────────────────────────────────

@@ -52,6 +52,8 @@ SITL-only: no simulated clock exists on Phase 4 real hardware, so this
 cannot recur there.
 """
 
+import math
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -63,6 +65,8 @@ from common_perception.frame_transforms import (
     enu_to_ned,
     flu_enu_to_frd_ned_quaternion,
     flu_to_frd,
+    quat_conjugate,
+    quat_mul,
     quat_rotate_vector,
 )
 
@@ -79,6 +83,41 @@ class OpenvinsOdometryBridge(Node):
     def __init__(self) -> None:
         super().__init__('openvins_odometry_bridge')
 
+        # CAMERA MOUNT COMPENSATION (2026-07-10): the d435i is mounted
+        # pitched down (30 deg in sim — x500_d435i_depth/model.sdf; keep
+        # this parameter in sync via vio.launch.py). OpenVINS estimates the
+        # pose of the CAMERA'S OWN IMU frame, which tilts with the mount —
+        # so its reported attitude/gyro are for the TILTED frame, offset
+        # from the vehicle body by a constant mount rotation. PX4's
+        # VehicleOdometry.q documents vehicle-body attitude, and EKF2's
+        # external-vision frame alignment assumes the vision frame differs
+        # from its own by YAW only — a constant uncompensated pitch there
+        # is exactly the kind of silent frame error Milestone B's
+        # extrinsics bug taught this project to fear. Compensation (math
+        # numerically validated against 5 cases incl. non-commuting
+        # rotations and gravity/gyro sanity — scratchpad
+        # validate_mount_quat.py, all passing, before this was written):
+        #   q_vehicle = q_imu * conj(q_mount)     (mount composes on the right)
+        #   w_body    = rotate(q_mount, w_imu)    (gyro coords imu -> body)
+        #   velocity  : UNCHANGED — v_imu is expressed in the IMU frame, so
+        #               it must still be rotated into world by the ORIGINAL
+        #               q_imu (using the compensated q here would be wrong).
+        #   position  : UNCHANGED — a point is a point; the mount offset is
+        #               EKF2_EV_POS_X/Y/Z's job (set_localization_source.py)
+        #               and a pure rotation about the sensor origin doesn't
+        #               move it.
+        # NOTE this is the vehicle-body <-> camera-IMU relationship, NOT
+        # the camera <-> camera-IMU one: kalibr_imucam_chain.yaml's
+        # T_cam_imu is invariant under the mount tilt (both sensors sit on
+        # the same rigid link and rotate together) and must NOT change
+        # with this parameter.
+        self.declare_parameter('mount_pitch_deg', 0.0)
+        pitch = math.radians(
+            self.get_parameter('mount_pitch_deg').get_parameter_value().double_value)
+        # Pitch-down about body +Y (FLU), Hamilton (w, x, y, z).
+        self._q_mount = (math.cos(pitch / 2), 0.0, math.sin(pitch / 2), 0.0)
+        self._q_mount_conj = quat_conjugate(self._q_mount)
+
         self._pub = self.create_publisher(
             VehicleOdometry, '/fmu/in/vehicle_visual_odometry', PX4_QOS)
         self.create_subscription(
@@ -86,7 +125,8 @@ class OpenvinsOdometryBridge(Node):
 
         self.get_logger().info(
             'openvins_odometry_bridge started: /ov_msckf/odomimu -> '
-            '/fmu/in/vehicle_visual_odometry (Milestone B real VIO)')
+            '/fmu/in/vehicle_visual_odometry (Milestone B real VIO), '
+            f'mount_pitch_deg={math.degrees(pitch):.1f}')
 
     def _on_odometry(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
@@ -97,18 +137,24 @@ class OpenvinsOdometryBridge(Node):
         position_ned = enu_to_ned((p.x, p.y, p.z))
         # geometry_msgs/Quaternion field order is (x, y, z, w); frame_transforms
         # uses Hamilton (w, x, y, z) throughout, matching VehicleOdometry.msg.
-        q_flu_enu = (q.w, q.x, q.y, q.z)
-        q_ned_frd = flu_enu_to_frd_ned_quaternion(q_flu_enu)
+        # q_imu is the TILTED camera-IMU frame's attitude; q_vehicle removes
+        # the fixed mount pitch (see the mount-compensation comment in
+        # __init__ — velocity below must keep using q_imu, not q_vehicle).
+        q_imu_flu_enu = (q.w, q.x, q.y, q.z)
+        q_vehicle_flu_enu = quat_mul(q_imu_flu_enu, self._q_mount_conj)
+        q_ned_frd = flu_enu_to_frd_ned_quaternion(q_vehicle_flu_enu)
         # msg.twist.twist.linear is body-frame (child_frame_id="imu"), but
         # VehicleOdometry.velocity is world-frame (FRD) — rotate into world
-        # (ENU) by the body's own orientation BEFORE the ENU->NED axis
-        # conversion. angular_velocity needs no such rotation: both
-        # nav_msgs/Odometry's twist.angular and VehicleOdometry's
-        # angular_velocity are body-frame, so a plain axis relabel is
-        # correct as-is. See frame_transforms.quat_rotate_vector.
-        velocity_enu = quat_rotate_vector(q_flu_enu, (v.x, v.y, v.z))
+        # (ENU) by the frame the vector actually lives in (the IMU frame,
+        # hence q_imu NOT q_vehicle) BEFORE the ENU->NED axis conversion.
+        # angular_velocity: gyro rates are also IMU-frame — rotate into the
+        # vehicle body frame by the mount rotation, then axis-relabel
+        # FLU->FRD (both nav_msgs twist.angular and VehicleOdometry's
+        # angular_velocity are body-frame).
+        velocity_enu = quat_rotate_vector(q_imu_flu_enu, (v.x, v.y, v.z))
         velocity_frd = enu_to_ned(velocity_enu)
-        angular_velocity_frd = flu_to_frd((w.x, w.y, w.z))
+        angular_velocity_body_flu = quat_rotate_vector(self._q_mount, (w.x, w.y, w.z))
+        angular_velocity_frd = flu_to_frd(angular_velocity_body_flu)
 
         out = VehicleOdometry()
         now_us = int(self.get_clock().now().nanoseconds / 1000)

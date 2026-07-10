@@ -16,7 +16,7 @@
 include .env
 export
 
-.PHONY: help build build-ws sim sim-gui flight-test mission stop gz-resync shell shell-px4 logs ps clean clean-all
+.PHONY: help build build-ws sim sim-gui flight-test mission drift-report stop gz-resync shell shell-px4 logs ps clean clean-all
 
 # Mission flown by `make mission` — currently just square (see common_missions).
 MISSION ?= square
@@ -170,6 +170,22 @@ mission:
 		source /ros2_ws_build/install/setup.bash && \
 		ros2 launch sim_bringup sim.launch.py action:=mission mission:=$(MISSION) \
 			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND)"
+
+# Drift measurement for VIO accuracy testing (README §12 issue 30's 5-run
+# procedure). Prints, side by side: Gazebo's GROUND-TRUTH vehicle pose
+# (what physically happened — the sim server knows exactly where the
+# vehicle is) and PX4's own position ESTIMATE (vehicle_local_position, what
+# the flight controller believed). Run it TWICE per test: once right before
+# `make mission` (baseline — both should be ~0) and once after landing.
+#   physical return error   = truth(after) - truth(before)   [what you saw]
+#   estimate residual drift = estimate(after) - estimate(before)
+# Frames differ (Gazebo world vs PX4 NED) — compare each source against its
+# OWN baseline, never truth directly against estimate.
+drift-report:
+	@echo "── Gazebo ground truth (x500_depth_0, world frame) ──"
+	-@docker exec px4-sim gz model -m x500_depth_0 --pose 2>/dev/null | grep -A3 "Name: x500_depth_0" || echo "  ! no vehicle pose — is the sim running?"
+	@echo "── PX4 estimate (vehicle_local_position, NED) ──"
+	-@docker exec px4-sim /PX4-Autopilot/build/px4_sitl_default/bin/px4-listener vehicle_local_position 2>/dev/null | grep -E "^    (x|y|z|vx|vy|vz|heading):" || echo "  ! no estimate — is PX4 running?"
 
 stop:
 	@docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile sim down --remove-orphans
