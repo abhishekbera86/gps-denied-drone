@@ -15,12 +15,13 @@
   OpenVINS's initializer fails every single frame
   ("[init]: failed initialization in 0.0000 seconds", instantly, forever —
   not a slow convergence, a hard block). This world adds a rectangular
-  "fence" of static, brightly-colored boxes around the mission bounding
-  box (see the props' own comment below for exact placement/why), sized to
-  stay within the front-facing D435i's view as the vehicle flies the
-  existing square_mission (3m side) / survey_mission (5x5m area) paths at
-  their 2m takeoff/cruise altitude. GPS/mission missions are unaffected by
-  this world (props are outside the flight paths, not obstacles on them).
+  "fence" of static, brightly-colored boxes CENTERED ON THE ORIGIN — the
+  vehicle spawns at the origin, missions take off and land there, and the
+  centered square_mission (3m side, corners ±1.5m) flies well inside the
+  fence with ≥3.25m margin (see the props' own comment below for exact
+  placement/why), all sized to stay within the front-facing D435i's view
+  at the 2m takeoff/cruise altitude. GPS missions are unaffected by this
+  world (props are outside the flight paths, not obstacles on them).
 
   IMPORTANT: the <world name="..."> below MUST equal the PX4_GZ_WORLD value
   ("vio_test"). PX4's gz_bridge builds every Gazebo topic as
@@ -122,26 +123,35 @@
       <elevation>0</elevation>
     </spherical_coordinates>
 
-    <!-- Feature-rich static props: a rectangular "fence" of colored boxes
-         around the mission bounding box. Missions fly strictly within
-         x in [0, area_length_m], y in [0, area_width_m] (survey_mission's
-         largest footprint: 5x5m; square_mission: 3x3m - see
-         sim_params.yaml) - confirmed from square_mission.py/survey_mission.py
-         waypoint generation, both start at the origin and stay in the
-         first quadrant. The fence sits >=1.5m outside a 6.5x6.5m cover box
-         (never a collision hazard) with props spaced ~1.1m apart so the
-         front-facing camera's ~69 deg horizontal FOV reliably has several
-         in view on every leg, at any heading. Heights/sizes/colors vary
-         for maximum FAST-corner richness. Earlier attempt (a sparse 12-box
-         ring at 4-8m radius) left most of the frame's 5x5 detection grid
-         cells empty, and OpenVINS's KLT tracker found only ~5 corners total
-         and RANSAC rejected them on the very next frame ("Failed to get
-         enough points to do RANSAC, resetting....."), so the feature
-         database stayed empty and initialization failed every frame. See
-         resource/phase3-gps-denied-localization-source.md. -->
+    <!-- Feature-rich static props: a rectangular "fence" of colored boxes,
+         CENTERED ON THE WORLD ORIGIN (recentered 2026-07-13 — see below).
+         The vehicle spawns at the origin, so the origin is also where
+         PX4's local/odom frame initializes and where every mission takes
+         off and lands. The fence spans x,y in [-4.75, 4.75]; the centered
+         square_mission (3m side -> corners at ±1.5m, see sim_params.yaml
+         and square_mission.py) keeps ≥3.25m of margin from any prop at
+         every corner, and the landing point (the origin) sits a full
+         4.75m from the nearest prop in every direction.
+
+         WHY RECENTERED: the original layout put the fence around the OLD
+         first-quadrant mission footprint (x,y in [-1.5, 8]), which left
+         the spawn/landing point only 1.5m from TWO fence lines — with
+         mono-VIO's known stochastic estimate drift, user-observed flights
+         drifted into the props during landing. Same props, sizes, colors,
+         and ~1.1m spacing as before (chosen so the front-facing camera's
+         ~69 deg horizontal FOV reliably has several in view on every leg,
+         at any heading; heights/sizes/colors vary for FAST-corner
+         richness) — a pure translation by (-3.25, -3.25). Earlier attempt
+         (a sparse 12-box ring at 4-8m radius) left most of the frame's
+         5x5 detection grid cells empty, and OpenVINS's KLT tracker found
+         only ~5 corners total and RANSAC rejected them on the very next
+         frame ("Failed to get enough points to do RANSAC, resetting....."),
+         so the feature database stayed empty and initialization failed
+         every frame. See resource/phase3-gps-denied-localization-source.md. -->
+
     <model name="vio_fence_000">
       <static>true</static>
-      <pose>-1.500 -1.500 0.350 0 0 0</pose>
+      <pose>-4.750 -4.750 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
@@ -154,7 +164,7 @@
     </model>
     <model name="vio_fence_001">
       <static>true</static>
-      <pose>-0.444 -1.500 0.575 0 0 0</pose>
+      <pose>-3.694 -4.750 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
@@ -167,7 +177,7 @@
     </model>
     <model name="vio_fence_002">
       <static>true</static>
-      <pose>0.611 -1.500 0.800 0 0 0</pose>
+      <pose>-2.639 -4.750 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
@@ -180,7 +190,7 @@
     </model>
     <model name="vio_fence_003">
       <static>true</static>
-      <pose>1.667 -1.500 0.462 0 0 0</pose>
+      <pose>-1.583 -4.750 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
@@ -193,7 +203,7 @@
     </model>
     <model name="vio_fence_004">
       <static>true</static>
-      <pose>2.722 -1.500 0.688 0 0 0</pose>
+      <pose>-0.528 -4.750 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
@@ -206,7 +216,7 @@
     </model>
     <model name="vio_fence_005">
       <static>true</static>
-      <pose>3.778 -1.500 0.350 0 0 0</pose>
+      <pose>0.528 -4.750 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 0.7</size></box></geometry>
@@ -219,7 +229,7 @@
     </model>
     <model name="vio_fence_006">
       <static>true</static>
-      <pose>4.833 -1.500 0.575 0 0 0</pose>
+      <pose>1.583 -4.750 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 1.15</size></box></geometry>
@@ -232,7 +242,7 @@
     </model>
     <model name="vio_fence_007">
       <static>true</static>
-      <pose>5.889 -1.500 0.800 0 0 0</pose>
+      <pose>2.639 -4.750 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.6</size></box></geometry>
@@ -245,7 +255,7 @@
     </model>
     <model name="vio_fence_008">
       <static>true</static>
-      <pose>6.944 -1.500 0.462 0 0 0</pose>
+      <pose>3.694 -4.750 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 0.9249999999999999</size></box></geometry>
@@ -258,7 +268,7 @@
     </model>
     <model name="vio_fence_009">
       <static>true</static>
-      <pose>8.000 -1.500 0.688 0 0 0</pose>
+      <pose>4.750 -4.750 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 1.375</size></box></geometry>
@@ -271,7 +281,7 @@
     </model>
     <model name="vio_fence_010">
       <static>true</static>
-      <pose>-1.500 8.000 0.350 0 0 0</pose>
+      <pose>-4.750 4.750 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
@@ -284,7 +294,7 @@
     </model>
     <model name="vio_fence_011">
       <static>true</static>
-      <pose>-0.444 8.000 0.575 0 0 0</pose>
+      <pose>-3.694 4.750 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.15</size></box></geometry>
@@ -297,7 +307,7 @@
     </model>
     <model name="vio_fence_012">
       <static>true</static>
-      <pose>0.611 8.000 0.800 0 0 0</pose>
+      <pose>-2.639 4.750 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 1.6</size></box></geometry>
@@ -310,7 +320,7 @@
     </model>
     <model name="vio_fence_013">
       <static>true</static>
-      <pose>1.667 8.000 0.462 0 0 0</pose>
+      <pose>-1.583 4.750 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 0.9249999999999999</size></box></geometry>
@@ -323,7 +333,7 @@
     </model>
     <model name="vio_fence_014">
       <static>true</static>
-      <pose>2.722 8.000 0.688 0 0 0</pose>
+      <pose>-0.528 4.750 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.375</size></box></geometry>
@@ -336,7 +346,7 @@
     </model>
     <model name="vio_fence_015">
       <static>true</static>
-      <pose>3.778 8.000 0.350 0 0 0</pose>
+      <pose>0.528 4.750 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
@@ -349,7 +359,7 @@
     </model>
     <model name="vio_fence_016">
       <static>true</static>
-      <pose>4.833 8.000 0.575 0 0 0</pose>
+      <pose>1.583 4.750 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
@@ -362,7 +372,7 @@
     </model>
     <model name="vio_fence_017">
       <static>true</static>
-      <pose>5.889 8.000 0.800 0 0 0</pose>
+      <pose>2.639 4.750 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
@@ -375,7 +385,7 @@
     </model>
     <model name="vio_fence_018">
       <static>true</static>
-      <pose>6.944 8.000 0.462 0 0 0</pose>
+      <pose>3.694 4.750 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
@@ -388,7 +398,7 @@
     </model>
     <model name="vio_fence_019">
       <static>true</static>
-      <pose>8.000 8.000 0.688 0 0 0</pose>
+      <pose>4.750 4.750 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
@@ -401,7 +411,7 @@
     </model>
     <model name="vio_fence_020">
       <static>true</static>
-      <pose>-1.500 -0.444 0.350 0 0 0</pose>
+      <pose>-4.750 -3.694 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
@@ -414,7 +424,7 @@
     </model>
     <model name="vio_fence_021">
       <static>true</static>
-      <pose>-1.500 0.611 0.462 0 0 0</pose>
+      <pose>-4.750 -2.639 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 0.9249999999999999</size></box></geometry>
@@ -427,7 +437,7 @@
     </model>
     <model name="vio_fence_022">
       <static>true</static>
-      <pose>-1.500 1.667 0.575 0 0 0</pose>
+      <pose>-4.750 -1.583 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.15</size></box></geometry>
@@ -440,7 +450,7 @@
     </model>
     <model name="vio_fence_023">
       <static>true</static>
-      <pose>-1.500 2.722 0.688 0 0 0</pose>
+      <pose>-4.750 -0.528 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.375</size></box></geometry>
@@ -453,7 +463,7 @@
     </model>
     <model name="vio_fence_024">
       <static>true</static>
-      <pose>-1.500 3.778 0.800 0 0 0</pose>
+      <pose>-4.750 0.528 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 1.6</size></box></geometry>
@@ -466,7 +476,7 @@
     </model>
     <model name="vio_fence_025">
       <static>true</static>
-      <pose>-1.500 4.833 0.350 0 0 0</pose>
+      <pose>-4.750 1.583 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 0.7</size></box></geometry>
@@ -479,7 +489,7 @@
     </model>
     <model name="vio_fence_026">
       <static>true</static>
-      <pose>-1.500 5.889 0.462 0 0 0</pose>
+      <pose>-4.750 2.639 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 0.9249999999999999</size></box></geometry>
@@ -492,7 +502,7 @@
     </model>
     <model name="vio_fence_027">
       <static>true</static>
-      <pose>-1.500 6.944 0.575 0 0 0</pose>
+      <pose>-4.750 3.694 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 1.15</size></box></geometry>
@@ -505,7 +515,7 @@
     </model>
     <model name="vio_fence_028">
       <static>true</static>
-      <pose>8.000 -0.444 0.688 0 0 0</pose>
+      <pose>4.750 -3.694 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.375</size></box></geometry>
@@ -518,7 +528,7 @@
     </model>
     <model name="vio_fence_029">
       <static>true</static>
-      <pose>8.000 0.611 0.800 0 0 0</pose>
+      <pose>4.750 -2.639 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.6</size></box></geometry>
@@ -531,7 +541,7 @@
     </model>
     <model name="vio_fence_030">
       <static>true</static>
-      <pose>8.000 1.667 0.350 0 0 0</pose>
+      <pose>4.750 -1.583 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 0.7</size></box></geometry>
@@ -544,7 +554,7 @@
     </model>
     <model name="vio_fence_031">
       <static>true</static>
-      <pose>8.000 2.722 0.462 0 0 0</pose>
+      <pose>4.750 -0.528 0.462 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 0.9249999999999999</size></box></geometry>
@@ -557,7 +567,7 @@
     </model>
     <model name="vio_fence_032">
       <static>true</static>
-      <pose>8.000 3.778 0.575 0 0 0</pose>
+      <pose>4.750 0.528 0.575 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 1.15</size></box></geometry>
@@ -570,7 +580,7 @@
     </model>
     <model name="vio_fence_033">
       <static>true</static>
-      <pose>8.000 4.833 0.688 0 0 0</pose>
+      <pose>4.750 1.583 0.688 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.3 0.3 1.375</size></box></geometry>
@@ -583,7 +593,7 @@
     </model>
     <model name="vio_fence_034">
       <static>true</static>
-      <pose>8.000 5.889 0.800 0 0 0</pose>
+      <pose>4.750 2.639 0.800 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.6 0.6 1.6</size></box></geometry>
@@ -596,7 +606,7 @@
     </model>
     <model name="vio_fence_035">
       <static>true</static>
-      <pose>8.000 6.944 0.350 0 0 0</pose>
+      <pose>4.750 3.694 0.350 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>0.45 0.45 0.7</size></box></geometry>
@@ -621,9 +631,11 @@
          uniform gray plane did not. These are thin (1cm), ground-level
          1x1m boxes (NOT a Gazebo material/texture asset — same technique
          as the fence props above, guaranteed to render with no missing-
-         asset risk) covering an 8x8m grid under the whole mission
-         footprint and landing point, so the tracker has real ground-level
-         corners in view at any altitude, including touchdown.
+         asset risk) covering an 8x8m grid (x,y in [-4, 4] — recentered on
+         the origin together with the fence, 2026-07-13) under the whole
+         centered-mission footprint and the origin landing point, so the
+         tracker has real ground-level corners in view at any altitude,
+         including touchdown.
 
          RE-COLORED 2026-07-10: the original version alternated exactly 2
          shades in a strict checkerboard — every tile corner in the grid was
@@ -641,7 +653,7 @@
          tile grid was added to fix. -->
     <model name="vio_floor_tile_000">
       <static>true</static>
-      <pose>-1.500 -1.500 0.005 0 0 0</pose>
+      <pose>-3.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -651,7 +663,7 @@
     </model>
     <model name="vio_floor_tile_001">
       <static>true</static>
-      <pose>-1.500 -0.500 0.005 0 0 0</pose>
+      <pose>-3.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -661,7 +673,7 @@
     </model>
     <model name="vio_floor_tile_002">
       <static>true</static>
-      <pose>-1.500 0.500 0.005 0 0 0</pose>
+      <pose>-3.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -671,7 +683,7 @@
     </model>
     <model name="vio_floor_tile_003">
       <static>true</static>
-      <pose>-1.500 1.500 0.005 0 0 0</pose>
+      <pose>-3.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -681,7 +693,7 @@
     </model>
     <model name="vio_floor_tile_004">
       <static>true</static>
-      <pose>-1.500 2.500 0.005 0 0 0</pose>
+      <pose>-3.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -691,7 +703,7 @@
     </model>
     <model name="vio_floor_tile_005">
       <static>true</static>
-      <pose>-1.500 3.500 0.005 0 0 0</pose>
+      <pose>-3.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -701,7 +713,7 @@
     </model>
     <model name="vio_floor_tile_006">
       <static>true</static>
-      <pose>-1.500 4.500 0.005 0 0 0</pose>
+      <pose>-3.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -711,7 +723,7 @@
     </model>
     <model name="vio_floor_tile_007">
       <static>true</static>
-      <pose>-1.500 5.500 0.005 0 0 0</pose>
+      <pose>-3.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -721,7 +733,7 @@
     </model>
     <model name="vio_floor_tile_008">
       <static>true</static>
-      <pose>-0.500 -1.500 0.005 0 0 0</pose>
+      <pose>-2.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -731,7 +743,7 @@
     </model>
     <model name="vio_floor_tile_009">
       <static>true</static>
-      <pose>-0.500 -0.500 0.005 0 0 0</pose>
+      <pose>-2.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -741,7 +753,7 @@
     </model>
     <model name="vio_floor_tile_010">
       <static>true</static>
-      <pose>-0.500 0.500 0.005 0 0 0</pose>
+      <pose>-2.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -751,7 +763,7 @@
     </model>
     <model name="vio_floor_tile_011">
       <static>true</static>
-      <pose>-0.500 1.500 0.005 0 0 0</pose>
+      <pose>-2.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -761,7 +773,7 @@
     </model>
     <model name="vio_floor_tile_012">
       <static>true</static>
-      <pose>-0.500 2.500 0.005 0 0 0</pose>
+      <pose>-2.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -771,7 +783,7 @@
     </model>
     <model name="vio_floor_tile_013">
       <static>true</static>
-      <pose>-0.500 3.500 0.005 0 0 0</pose>
+      <pose>-2.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -781,7 +793,7 @@
     </model>
     <model name="vio_floor_tile_014">
       <static>true</static>
-      <pose>-0.500 4.500 0.005 0 0 0</pose>
+      <pose>-2.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -791,7 +803,7 @@
     </model>
     <model name="vio_floor_tile_015">
       <static>true</static>
-      <pose>-0.500 5.500 0.005 0 0 0</pose>
+      <pose>-2.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -801,7 +813,7 @@
     </model>
     <model name="vio_floor_tile_016">
       <static>true</static>
-      <pose>0.500 -1.500 0.005 0 0 0</pose>
+      <pose>-1.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -811,7 +823,7 @@
     </model>
     <model name="vio_floor_tile_017">
       <static>true</static>
-      <pose>0.500 -0.500 0.005 0 0 0</pose>
+      <pose>-1.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -821,7 +833,7 @@
     </model>
     <model name="vio_floor_tile_018">
       <static>true</static>
-      <pose>0.500 0.500 0.005 0 0 0</pose>
+      <pose>-1.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -831,7 +843,7 @@
     </model>
     <model name="vio_floor_tile_019">
       <static>true</static>
-      <pose>0.500 1.500 0.005 0 0 0</pose>
+      <pose>-1.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -841,7 +853,7 @@
     </model>
     <model name="vio_floor_tile_020">
       <static>true</static>
-      <pose>0.500 2.500 0.005 0 0 0</pose>
+      <pose>-1.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -851,7 +863,7 @@
     </model>
     <model name="vio_floor_tile_021">
       <static>true</static>
-      <pose>0.500 3.500 0.005 0 0 0</pose>
+      <pose>-1.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -861,7 +873,7 @@
     </model>
     <model name="vio_floor_tile_022">
       <static>true</static>
-      <pose>0.500 4.500 0.005 0 0 0</pose>
+      <pose>-1.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -871,7 +883,7 @@
     </model>
     <model name="vio_floor_tile_023">
       <static>true</static>
-      <pose>0.500 5.500 0.005 0 0 0</pose>
+      <pose>-1.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -881,7 +893,7 @@
     </model>
     <model name="vio_floor_tile_024">
       <static>true</static>
-      <pose>1.500 -1.500 0.005 0 0 0</pose>
+      <pose>-0.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -891,7 +903,7 @@
     </model>
     <model name="vio_floor_tile_025">
       <static>true</static>
-      <pose>1.500 -0.500 0.005 0 0 0</pose>
+      <pose>-0.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -901,7 +913,7 @@
     </model>
     <model name="vio_floor_tile_026">
       <static>true</static>
-      <pose>1.500 0.500 0.005 0 0 0</pose>
+      <pose>-0.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -911,7 +923,7 @@
     </model>
     <model name="vio_floor_tile_027">
       <static>true</static>
-      <pose>1.500 1.500 0.005 0 0 0</pose>
+      <pose>-0.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -921,7 +933,7 @@
     </model>
     <model name="vio_floor_tile_028">
       <static>true</static>
-      <pose>1.500 2.500 0.005 0 0 0</pose>
+      <pose>-0.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -931,7 +943,7 @@
     </model>
     <model name="vio_floor_tile_029">
       <static>true</static>
-      <pose>1.500 3.500 0.005 0 0 0</pose>
+      <pose>-0.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -941,7 +953,7 @@
     </model>
     <model name="vio_floor_tile_030">
       <static>true</static>
-      <pose>1.500 4.500 0.005 0 0 0</pose>
+      <pose>-0.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -951,7 +963,7 @@
     </model>
     <model name="vio_floor_tile_031">
       <static>true</static>
-      <pose>1.500 5.500 0.005 0 0 0</pose>
+      <pose>-0.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -961,7 +973,7 @@
     </model>
     <model name="vio_floor_tile_032">
       <static>true</static>
-      <pose>2.500 -1.500 0.005 0 0 0</pose>
+      <pose>0.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -971,7 +983,7 @@
     </model>
     <model name="vio_floor_tile_033">
       <static>true</static>
-      <pose>2.500 -0.500 0.005 0 0 0</pose>
+      <pose>0.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -981,7 +993,7 @@
     </model>
     <model name="vio_floor_tile_034">
       <static>true</static>
-      <pose>2.500 0.500 0.005 0 0 0</pose>
+      <pose>0.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -991,7 +1003,7 @@
     </model>
     <model name="vio_floor_tile_035">
       <static>true</static>
-      <pose>2.500 1.500 0.005 0 0 0</pose>
+      <pose>0.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1001,7 +1013,7 @@
     </model>
     <model name="vio_floor_tile_036">
       <static>true</static>
-      <pose>2.500 2.500 0.005 0 0 0</pose>
+      <pose>0.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1011,7 +1023,7 @@
     </model>
     <model name="vio_floor_tile_037">
       <static>true</static>
-      <pose>2.500 3.500 0.005 0 0 0</pose>
+      <pose>0.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1021,7 +1033,7 @@
     </model>
     <model name="vio_floor_tile_038">
       <static>true</static>
-      <pose>2.500 4.500 0.005 0 0 0</pose>
+      <pose>0.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1031,7 +1043,7 @@
     </model>
     <model name="vio_floor_tile_039">
       <static>true</static>
-      <pose>2.500 5.500 0.005 0 0 0</pose>
+      <pose>0.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1041,7 +1053,7 @@
     </model>
     <model name="vio_floor_tile_040">
       <static>true</static>
-      <pose>3.500 -1.500 0.005 0 0 0</pose>
+      <pose>1.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1051,7 +1063,7 @@
     </model>
     <model name="vio_floor_tile_041">
       <static>true</static>
-      <pose>3.500 -0.500 0.005 0 0 0</pose>
+      <pose>1.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1061,7 +1073,7 @@
     </model>
     <model name="vio_floor_tile_042">
       <static>true</static>
-      <pose>3.500 0.500 0.005 0 0 0</pose>
+      <pose>1.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1071,7 +1083,7 @@
     </model>
     <model name="vio_floor_tile_043">
       <static>true</static>
-      <pose>3.500 1.500 0.005 0 0 0</pose>
+      <pose>1.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1081,7 +1093,7 @@
     </model>
     <model name="vio_floor_tile_044">
       <static>true</static>
-      <pose>3.500 2.500 0.005 0 0 0</pose>
+      <pose>1.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1091,7 +1103,7 @@
     </model>
     <model name="vio_floor_tile_045">
       <static>true</static>
-      <pose>3.500 3.500 0.005 0 0 0</pose>
+      <pose>1.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1101,7 +1113,7 @@
     </model>
     <model name="vio_floor_tile_046">
       <static>true</static>
-      <pose>3.500 4.500 0.005 0 0 0</pose>
+      <pose>1.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1111,7 +1123,7 @@
     </model>
     <model name="vio_floor_tile_047">
       <static>true</static>
-      <pose>3.500 5.500 0.005 0 0 0</pose>
+      <pose>1.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1121,7 +1133,7 @@
     </model>
     <model name="vio_floor_tile_048">
       <static>true</static>
-      <pose>4.500 -1.500 0.005 0 0 0</pose>
+      <pose>2.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1131,7 +1143,7 @@
     </model>
     <model name="vio_floor_tile_049">
       <static>true</static>
-      <pose>4.500 -0.500 0.005 0 0 0</pose>
+      <pose>2.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1141,7 +1153,7 @@
     </model>
     <model name="vio_floor_tile_050">
       <static>true</static>
-      <pose>4.500 0.500 0.005 0 0 0</pose>
+      <pose>2.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1151,7 +1163,7 @@
     </model>
     <model name="vio_floor_tile_051">
       <static>true</static>
-      <pose>4.500 1.500 0.005 0 0 0</pose>
+      <pose>2.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1161,7 +1173,7 @@
     </model>
     <model name="vio_floor_tile_052">
       <static>true</static>
-      <pose>4.500 2.500 0.005 0 0 0</pose>
+      <pose>2.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1171,7 +1183,7 @@
     </model>
     <model name="vio_floor_tile_053">
       <static>true</static>
-      <pose>4.500 3.500 0.005 0 0 0</pose>
+      <pose>2.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1181,7 +1193,7 @@
     </model>
     <model name="vio_floor_tile_054">
       <static>true</static>
-      <pose>4.500 4.500 0.005 0 0 0</pose>
+      <pose>2.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1191,7 +1203,7 @@
     </model>
     <model name="vio_floor_tile_055">
       <static>true</static>
-      <pose>4.500 5.500 0.005 0 0 0</pose>
+      <pose>2.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1201,7 +1213,7 @@
     </model>
     <model name="vio_floor_tile_056">
       <static>true</static>
-      <pose>5.500 -1.500 0.005 0 0 0</pose>
+      <pose>3.500 -3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1211,7 +1223,7 @@
     </model>
     <model name="vio_floor_tile_057">
       <static>true</static>
-      <pose>5.500 -0.500 0.005 0 0 0</pose>
+      <pose>3.500 -2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1221,7 +1233,7 @@
     </model>
     <model name="vio_floor_tile_058">
       <static>true</static>
-      <pose>5.500 0.500 0.005 0 0 0</pose>
+      <pose>3.500 -1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1231,7 +1243,7 @@
     </model>
     <model name="vio_floor_tile_059">
       <static>true</static>
-      <pose>5.500 1.500 0.005 0 0 0</pose>
+      <pose>3.500 -0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1241,7 +1253,7 @@
     </model>
     <model name="vio_floor_tile_060">
       <static>true</static>
-      <pose>5.500 2.500 0.005 0 0 0</pose>
+      <pose>3.500 0.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1251,7 +1263,7 @@
     </model>
     <model name="vio_floor_tile_061">
       <static>true</static>
-      <pose>5.500 3.500 0.005 0 0 0</pose>
+      <pose>3.500 1.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1261,7 +1273,7 @@
     </model>
     <model name="vio_floor_tile_062">
       <static>true</static>
-      <pose>5.500 4.500 0.005 0 0 0</pose>
+      <pose>3.500 2.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>
@@ -1271,7 +1283,7 @@
     </model>
     <model name="vio_floor_tile_063">
       <static>true</static>
-      <pose>5.500 5.500 0.005 0 0 0</pose>
+      <pose>3.500 3.500 0.005 0 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry><box><size>1.0 1.0 0.01</size></box></geometry>

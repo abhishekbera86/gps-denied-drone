@@ -261,10 +261,15 @@ PX4_GZ_WORLD=vio_test make sim-gui    # required for VIO_BACKEND=openvins (§8)
 `empty` (`docker/px4_sitl_worlds/empty.sdf`) is open space with nothing to
 watch takeoff/missions through. `vio_test`
 (`docker/px4_sitl_worlds/vio_test.sdf`) adds a ring of colored boxes plus a
-ground-level checkerboard — **required, not cosmetic**, if you're flying
-`VIO_BACKEND=openvins`: monocular VIO needs real corner features to track,
-and the plain `empty` world's flat gray plane gives it zero (OpenVINS's
-initializer fails every frame). Both are repo-owned overlay files, not a
+ground-level tile grid, both **centered on the spawn point** (the vehicle
+spawns at the world origin, which is also where PX4's local/odom frame
+initializes and where every mission takes off and lands — fence at
+±4.75 m, tiles ±4 m, so landing drift has maximum clearance on every
+side; see §4.7). The props are **required, not cosmetic**, if you're
+flying `VIO_BACKEND=openvins`: monocular VIO needs real corner features
+to track, and the plain `empty` world's flat gray plane gives it zero
+(OpenVINS's initializer fails every frame). Both are repo-owned overlay
+files, not a
 fork of PX4 (§11) — same mechanism as the SITL param override, §12 issue 4.
 
 **Setting `PX4_GZ_WORLD` in `.env` instead of on the command line does
@@ -382,11 +387,19 @@ LOCALIZATION=vision VIO_BACKEND=openvins make mission MISSION=square    # GPS-de
 
 Runs `ros2 launch sim_bringup sim.launch.py action:=mission
 mission:=<name>`. `square` (exact geometry — `sim_params.yaml`, §7) is the
-only mission in the repo right now — a square flight path at takeoff
-height, nose pointed along each leg, landing back at the start. (A
-`survey` lawnmower-coverage mission existed earlier but was removed
-2026-07-09 — its indoor test geometry didn't suit its own footprint;
-a differently-shaped mission against a purpose-built world is planned
+only mission in the repo right now — a square flight path **centered on
+the takeoff point** (corners at ±`side_length_m`/2, so ±1.5 m with the
+default 3 m side), nose pointed along each leg, with an explicit final
+waypoint back to the center before landing. Centered, not first-quadrant,
+since 2026-07-13: the original route flew out of one corner of the
+`vio_test` fence area and landed only 1.5 m from two fence-prop lines —
+with mono-VIO's known stochastic drift, observed flights hit the props
+during landing. The world's fence/tiles were recentered on the origin at
+the same time, so the landing point now has 4.75 m of clearance in every
+direction and the flight corners keep ≥3.25 m. (A `survey`
+lawnmower-coverage mission existed earlier but was removed 2026-07-09 —
+its indoor test geometry didn't suit its own footprint; a
+differently-shaped mission against a purpose-built world is planned
 separately, not a retraction of the pattern itself.)
 
 `square` is a subclass of `MissionBase`, which reuses the entire hover-test
@@ -609,7 +622,7 @@ without needing to redesign the config format itself.
 
 | Parameter | Type | `sim_params.yaml` | `hw_params.yaml` | Meaning |
 |---|---|---|---|---|
-| `side_length_m` | float | `3.0` | `2.0` | Side length of the square flight path, in meters. |
+| `side_length_m` | float | `3.0` | `2.0` | Side length of the square flight path, in meters. The square is centered on the takeoff point (corners at ±half this value), not flown out of one corner — see §4.7. |
 
 Override any of these ad hoc without touching the YAML, e.g. for a quick
 one-off test (this satisfies the required-parameter check just like the YAML

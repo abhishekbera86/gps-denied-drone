@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
-"""SquareMission — fly a square at takeoff height and land back at the start.
+"""SquareMission — fly a square CENTERED on the takeoff point, land back at it.
 
-Corners in order: origin → north → north-east → east → origin, nose pointed
-along the direction of travel on each leg.
+The square is symmetric around the local origin (corners at ±side/2), with a
+final waypoint returning to the origin before landing, nose pointed along
+the direction of travel on each leg.
+
+CENTERED, not first-quadrant (changed 2026-07-13): the original route flew
+corners (side,0)→(side,side)→(0,side)→(0,0) — entirely into the first
+quadrant, with the takeoff/landing origin sitting at the route's own
+corner. In the vio_test world that placed the landing point only 1.5m from
+two fence-prop lines, and with mono-VIO's known stochastic estimate drift,
+user-observed flights drifted into the props during landing. Centering the
+square puts the landing point at the maximum possible distance from every
+fence line (the world was recentered on the origin at the same time — see
+docker/px4_sitl_worlds/vio_test.sdf), and the auto-derived geofence
+(origin + waypoints bounding box, offboard_control_node._geofence_bounds)
+follows the new symmetric shape with no geofence code change.
 """
 
 from common_missions.mission_base import MissionBase, run_mission
@@ -17,10 +30,19 @@ class SquareMission(MissionBase):
         self._side_length_m = self._require_param('side_length_m')
 
     def build_waypoints(self) -> list[tuple[float, float, float, float]]:
-        side = self._side_length_m
+        half = self._side_length_m / 2.0
         height = self._takeoff_height_m
 
-        corners = [(side, 0.0), (side, side), (0.0, side), (0.0, 0.0)]
+        # Corners of a square centered on the origin, then an explicit
+        # return-to-center waypoint so the vehicle lands mid-fence rather
+        # than at a corner of its own route.
+        corners = [
+            (half, -half),
+            (half, half),
+            (-half, half),
+            (-half, -half),
+            (0.0, 0.0),
+        ]
         waypoints = []
         previous = (0.0, 0.0)
         for corner in corners:

@@ -61,6 +61,8 @@ square_mission:
     max_velocity_m_s: 0.8
     land_disarm_low_throttle_dwell_s: 3.0  # fallback disarm: sustained low-throttle needed
     land_disarm_max_timeout_s: 60.0        # fallback disarm: give up (stay armed) past this
-    side_length_m: 3.0           # square side length (m)
-    geofence_margin_m: 2.0             # bounding box of the square's 4 corners, +2m each side
+    side_length_m: 3.0           # square side length (m) — CENTERED on the
+                                 # takeoff point (corners at ±1.5m), landing
+                                 # back at the center; see square_mission.py
+    geofence_margin_m: 2.0             # bounding box of the centered square's corners, +2m each side
     geofence_height_margin_m: 1.5      # max climb above takeoff_height_m (m)
