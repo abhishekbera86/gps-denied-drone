@@ -59,6 +59,27 @@ services:
       # props for monocular VIO feature tracking). See
       # resource/phase3-gps-denied-localization-source.md.
       PX4_GZ_WORLD: "${PX4_GZ_WORLD:-empty}"
+    devices:
+      # GPU render nodes — even fully headless, Gazebo renders the
+      # simulated camera sensors every sim frame, and without /dev/dri that
+      # falls back to CPU software rasterization. Confirmed live
+      # (2026-07-13) as the dominant real-time-factor killer: RTF ~0.02-0.03
+      # without this, ~1.0 with it, on an otherwise idle 8-core host — a 40x
+      # difference. This matters for MORE than speed: at RTF 0.02, the
+      # README's own "PX4's EKF2 needs ~30-60s to be ready" guidance means
+      # 30-60 REAL seconds only buys EKF2 ~1-2 SIMULATED seconds — nowhere
+      # near enough to converge — and PX4's arm-gate is looser than "fully
+      # converged," so a mission can arm anyway and get a garbage first
+      # position sample. Confirmed live: a GPS-only hover test (no camera,
+      # no VIO — should be the most reliable possible flight) false-tripped
+      # its own geofence on the very first tick after arming without this,
+      # and flew a clean, accurate hover/square mission with it. Needed for
+      # BOTH `LOCALIZATION=gps` and `LOCALIZATION=vision` reliability.
+      #
+      # PORTABILITY: this makes GPU render nodes mandatory to start the
+      # stack — on a GPU-less VM/server, `docker compose up` will fail with
+      # a device-not-found error. Comment this `devices:` block out there.
+      - /dev/dri:/dev/dri
     profiles: [sim]
 
   # ── ROS 2 Humble + PX4 uXRCE-DDS bridge ───────────────────────────────────

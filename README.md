@@ -1415,6 +1415,43 @@ same RTF-dependent arming gap unchanged (OpenVINS's 1-second rule isn't
 mode-specific), so testing on a healthier-RTF host is worth doing before
 or alongside adding stereo, not strictly required first.
 
+**31. `/dev/dri` (GPU rendering) backported to the headless base
+`docker-compose.yml` (2026-07-13) — turns out it wasn't just a vision-mode
+speed issue.** User reported GPS-only flights (no camera, no VIO) also
+drifting and false-tripping the geofence right after arming, and a square
+mission that visually looked like it never completed. Root cause:
+identical to issue 29/30's RTF finding, but hitting the GPS/EKF2-settle
+path this time — without `/dev/dri`, the headless container
+software-rendered its cameras on CPU (RTF ~0.02-0.03 even for a mission
+using no camera data at all, since Gazebo still renders every sensor every
+frame regardless of who's subscribed), and this README's own "PX4's EKF2
+needs ~30-60s after `make sim`" guidance is REAL-time advice that assumes
+RTF≈1 — at RTF 0.02, 30-60 real seconds only buys EKF2 ~1-2 *simulated*
+seconds, nowhere near enough to converge, while PX4's arm-gate is looser
+than "fully converged" and lets the mission arm anyway. Confirmed live: a
+GPS-only hover test false-tripped its own geofence on the very first tick
+after arming without `/dev/dri`; with it (and a real ~35s wait), the same
+test hovered cleanly and a `square` mission hit all 5 waypoints in order
+and landed within ~2m of center. `/dev/dri` is now baked into the base
+compose file (previously only the GUI overlay had it) — mandatory for
+**both** `LOCALIZATION=gps` and `LOCALIZATION=vision` reliability, not
+just the sim-gui/VIO path. **Portability**: this makes GPU render nodes
+required to start the stack at all — on a GPU-less VM/server, `docker
+compose up` fails with a device error; comment the `devices:` block out
+there.
+
+**32. `/drone/path` (RViz) reset on arm (2026-07-13)** — `state_tf_publisher`
+never restarts between flights by design (§4.3), so two unrelated flights
+run back to back used to draw as ONE continuous connected line — the last
+pose of flight A joined straight to the first pose of flight B. A user
+screenshot of exactly this (two flights' paths tangled into one shape via
+a straight connecting line) was initially, reasonably mistaken for a
+single badly-drifting square mission. Fixed: `state_tf_publisher` now
+subscribes to `vehicle_status_v1` and clears its path buffer on every
+disarmed→armed transition, so each flight draws its own trace. Confirmed
+live across two consecutive flights (a hover then a `square` mission) —
+the reset fired exactly once per arm.
+
 ---
 
 ## 13. Repository Layout

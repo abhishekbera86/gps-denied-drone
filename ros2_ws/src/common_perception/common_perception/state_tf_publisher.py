@@ -15,6 +15,16 @@ missions. This node is instead started once by
 session — the same "up from the start" reasoning as docker-compose.gui.
 yml's rqt-viewer.
 
+PATH RESET ON ARM (2026-07-13): `/drone/path` clears whenever
+`vehicle_status_v1.arming_state` transitions to ARMED. Without this, since
+the node is never restarted between flights, two unrelated flights (e.g. a
+hover test followed by a square mission) draw as ONE continuous connected
+line in RViz — the tail pose of flight A joined straight to the head pose
+of flight B — which looks exactly like a confused, self-intersecting path
+and was mistaken for a single bad flight (confirmed live: a screenshot of
+two flights' concatenated paths looked like a tangled figure-eight, not
+either flight's actual shape). Each armed flight now starts a fresh trace.
+
 FRAME CONVERSION: VehicleOdometry position/orientation are NED/FRD (PX4's
 own convention); RViz/TF want ENU/FLU. `frame_transforms.enu_to_ned` and
 `flu_enu_to_frd_ned_quaternion` are each their own inverse (see that
@@ -27,7 +37,7 @@ import collections
 import rclpy
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from nav_msgs.msg import Path
-from px4_msgs.msg import VehicleOdometry
+from px4_msgs.msg import VehicleOdometry, VehicleStatus
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from tf2_ros import TransformBroadcaster
@@ -64,9 +74,12 @@ class StateTfPublisher(Node):
         self._path_pub = self.create_publisher(Path, '/drone/path', 10)
         self._path_poses = collections.deque(maxlen=MAX_PATH_POSES)
         self._latest = None
+        self._was_armed = False
 
         self.create_subscription(
             VehicleOdometry, '/fmu/out/vehicle_odometry', self._on_odometry, PX4_QOS)
+        self.create_subscription(
+            VehicleStatus, '/fmu/out/vehicle_status_v1', self._on_vehicle_status, PX4_QOS)
         self.create_timer(PUBLISH_PERIOD_S, self._publish)
 
         self.get_logger().info(
@@ -75,6 +88,13 @@ class StateTfPublisher(Node):
 
     def _on_odometry(self, msg: VehicleOdometry) -> None:
         self._latest = msg
+
+    def _on_vehicle_status(self, msg: VehicleStatus) -> None:
+        now_armed = msg.arming_state == VehicleStatus.ARMING_STATE_ARMED
+        if now_armed and not self._was_armed:
+            self._path_poses.clear()
+            self.get_logger().info('armed — starting a fresh /drone/path trace')
+        self._was_armed = now_armed
 
     def _publish(self) -> None:
         msg = self._latest
