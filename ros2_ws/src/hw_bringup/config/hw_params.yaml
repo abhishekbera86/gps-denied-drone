@@ -31,6 +31,12 @@ offboard_control_node:
     # (nearest real wall/obstacle distance from takeoff point) - 1.0m before
     # any free flight — see offboard_control_node.py's `_geofence_bounds`.
     geofence_hard_limit_m: 10.0
+    # Source-agnostic estimate-health watchdog (GPS or vision) — see
+    # sim_params.yaml's comment and offboard_control_node.py's
+    # `_check_estimate_health`. Slightly longer than sim: real EKF/VIO
+    # noise is noisier than SITL, a bit more debounce margin before
+    # aborting a real flight.
+    estimate_invalid_abort_dwell_s: 2.0
 
 # ── square mission (Phase 4: action:=mission mission:=square) ──────────────
 square_mission:
@@ -45,3 +51,10 @@ square_mission:
     side_length_m: 2.0           # smaller footprint for a real test area
     geofence_margin_m: 1.0
     geofence_height_margin_m: 1.0
+    # UNTESTED PLACEHOLDER — see hover profile's comment above. Was
+    # MISSING entirely until 2026-07-13 (a real oversight, caught while
+    # adding the estimate-health watchdog below) — would have failed
+    # loudly at startup (this project's params have no silent code
+    # defaults), not silently, but still needed fixing.
+    geofence_hard_limit_m: 10.0
+    estimate_invalid_abort_dwell_s: 2.0

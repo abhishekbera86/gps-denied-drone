@@ -95,6 +95,19 @@ class OffboardControlNode(Node):
     live 2026-07-13 flying the real vehicle into the fenced area's wall —
     force-disarms immediately instead, since re-issuing `_land()` at that
     point is a no-op (see `_check_geofence`'s `during_land` docstring).
+
+    ESTIMATE-HEALTH WATCHDOG: a second, independent safety layer alongside
+    the geofence, added 2026-07-13 after a VIO pipeline node crashed
+    outright mid-flight with nothing watching for it (see
+    `_check_estimate_health`). Deliberately source-agnostic — it reads
+    PX4's own `xy_valid`/`v_xy_valid` judgement of its current fused
+    estimate, not anything vision-specific, so this class stays unaware
+    of whether GPS or vision is active (same invariant as everywhere else
+    in this project). Same TAKEOFF/WAYPOINTS/HOVER/LAND coverage and the
+    same during_land force-disarm-as-last-resort shape as the geofence,
+    with one difference: a short dwell (`estimate_invalid_abort_dwell_s`)
+    before aborting, since a single-tick validity flicker shouldn't end a
+    flight by itself the way a hard position-bound breach should.
     """
 
     def __init__(self, node_name: str = 'offboard_control_node') -> None:
@@ -112,6 +125,8 @@ class OffboardControlNode(Node):
         self._geofence_margin_m = self._require_param('geofence_margin_m')
         self._geofence_height_margin_m = self._require_param('geofence_height_margin_m')
         self._geofence_hard_limit_m = self._require_param('geofence_hard_limit_m')
+        self._estimate_invalid_abort_dwell_s = self._require_param(
+            'estimate_invalid_abort_dwell_s')
 
         # NED frame: down is positive z, so climbing means z becomes negative.
         self._target_z = -abs(self._takeoff_height_m)
@@ -166,6 +181,20 @@ class OffboardControlNode(Node):
         self._geofence_breached = False
         self._geofence_land_emergency = False
 
+        # Estimate-health watchdog bookkeeping (2026-07-13) — same
+        # two-latch shape as the geofence above, same reasoning: a
+        # TAKEOFF/WAYPOINTS/HOVER-phase abort must not block the
+        # independent during-land emergency check from also firing if the
+        # estimate is STILL invalid (or goes invalid again) after that
+        # abort has already switched to LAND. `_estimate_invalid_since` is
+        # `None` while the estimate looks healthy, else the time it FIRST
+        # went invalid — reset the instant it recovers, so a brief flicker
+        # doesn't quietly count toward the dwell threshold much later.
+        # See `_check_estimate_health`.
+        self._estimate_invalid_since = None
+        self._estimate_breach = False
+        self._estimate_land_emergency = False
+
         # NED (x, y, z, yaw) targets flown in order after takeoff; empty
         # means the plain takeoff-hover-land profile.
         self._waypoints: list[tuple[float, float, float, float]] = []
@@ -178,7 +207,8 @@ class OffboardControlNode(Node):
             f'hover={self._hover_seconds}s, max_velocity={self._max_velocity_m_s}m/s, '
             f'geofence_margin={self._geofence_margin_m}m, '
             f'geofence_height_margin={self._geofence_height_margin_m}m, '
-            f'geofence_hard_limit={self._geofence_hard_limit_m}m')
+            f'geofence_hard_limit={self._geofence_hard_limit_m}m, '
+            f'estimate_invalid_abort_dwell={self._estimate_invalid_abort_dwell_s}s')
 
     # ── Parameter loading ────────────────────────────────────────────────
     def _require_param(self, name: str) -> float:
@@ -376,6 +406,85 @@ class OffboardControlNode(Node):
             return True
         return False
 
+    def _check_estimate_health(self, *, during_land: bool = False) -> bool:
+        """Abort on a SUSTAINED-invalid position/velocity estimate.
+
+        Deliberately does NOT know or care whether GPS or vision is the
+        active source — `VehicleLocalPosition.xy_valid`/`v_xy_valid` are
+        PX4's OWN internal judgement of whether its current fused estimate
+        is trustworthy, already true regardless of which aiding source
+        produced it. Reading these instead of, say, the vision pipeline's
+        own topics keeps this class unaware of localization source, same
+        as everywhere else in this project (`common_perception`'s whole
+        package description: "common_control/common_missions never know
+        which source is active").
+
+        WHY THIS EXISTS (2026-07-13): confirmed live that a VIO pipeline
+        node (`openvins_odometry_bridge`) can crash outright mid-flight —
+        an rclpy/DDS message-deserialization RuntimeError under host CPU
+        contention, not a logic bug (see that node's own `main()` for the
+        full trace) — silently stopping ALL vision data to PX4 for the
+        rest of the flight, with nothing watching for it. The mission in
+        question happened to still land only mildly drifted, but nothing
+        would have caught a worse outcome. This is the general,
+        source-agnostic version of that catch: it fires on ANY sustained
+        estimate-health problem, not just "the vision bridge process is
+        dead" — a stalled DDS agent, a wedged camera bridge, or genuine
+        vision divergence bad enough that PX4 itself stops trusting the
+        fusion all trigger the same PX4-side flag.
+
+        DWELL, unlike the geofence's deliberately-immediate check: a
+        single-tick flicker in `xy_valid` during normal operation (e.g.
+        transient EKF2 covariance resets) shouldn't abort a flight by
+        itself — `estimate_invalid_abort_dwell_s` requires it to stay
+        invalid continuously for that long first. `_estimate_invalid_since`
+        resets to `None` the instant validity recovers, so intermittent
+        blips can't quietly accumulate toward the threshold.
+
+        Same `during_land` split and reasoning as `_check_geofence`: a
+        normal-path abort calls `_land()`; a during-land trigger
+        force-disarms immediately, since AUTO_LAND is already the active
+        mode and there's nothing to hand it that isn't itself built on the
+        same estimate this check just judged untrustworthy.
+        """
+        if during_land:
+            if self._estimate_land_emergency:
+                return True
+        elif self._estimate_breach:
+            return True
+
+        pos = self._vehicle_local_position
+        healthy = pos.xy_valid and pos.v_xy_valid
+        now = self.get_clock().now()
+        if healthy:
+            self._estimate_invalid_since = None
+            return False
+
+        if self._estimate_invalid_since is None:
+            self._estimate_invalid_since = now
+        invalid_for_s = (now - self._estimate_invalid_since).nanoseconds / 1e9
+        if invalid_for_s < self._estimate_invalid_abort_dwell_s:
+            return False
+
+        if during_land:
+            self._estimate_land_emergency = True
+            self.get_logger().error(
+                f'POSITION ESTIMATE INVALID DURING LANDING for {invalid_for_s:.1f}s '
+                f'(xy_valid={pos.xy_valid}, v_xy_valid={pos.v_xy_valid}) — AUTO_LAND is '
+                f'flying on an estimate PX4 itself no longer trusts, with no correction '
+                f'possible from here. Force-disarming immediately (last resort).')
+            self._disarm(reason='estimate invalid during landing')
+            self._state = FlightState.DONE
+        else:
+            self._estimate_breach = True
+            self.get_logger().error(
+                f'POSITION ESTIMATE INVALID for {invalid_for_s:.1f}s '
+                f'(xy_valid={pos.xy_valid}, v_xy_valid={pos.v_xy_valid}) — aborting mission, '
+                f'switching to LAND immediately.')
+            self._land()
+            self._state = FlightState.LAND
+        return True
+
     def _publish_vehicle_command(self, command: int, **params) -> None:
         msg = VehicleCommand()
         msg.command = command
@@ -471,7 +580,7 @@ class OffboardControlNode(Node):
             return
 
         if self._state == FlightState.TAKEOFF:
-            if self._check_geofence():
+            if self._check_geofence() or self._check_estimate_health():
                 return
             self._publish_setpoint(0.0, 0.0, self._target_z)
             if self._vehicle_local_position.z <= self._target_z + 0.2:
@@ -487,7 +596,7 @@ class OffboardControlNode(Node):
             return
 
         if self._state == FlightState.WAYPOINTS:
-            if self._check_geofence():
+            if self._check_geofence() or self._check_estimate_health():
                 return
             x, y, z, yaw = self._waypoints[self._waypoint_index]
             self._publish_setpoint(x, y, z, yaw)
@@ -503,7 +612,7 @@ class OffboardControlNode(Node):
             return
 
         if self._state == FlightState.HOVER:
-            if self._check_geofence():
+            if self._check_geofence() or self._check_estimate_health():
                 return
             self._publish_setpoint(0.0, 0.0, self._target_z)
             self._hover_ticks_remaining -= 1
@@ -520,7 +629,8 @@ class OffboardControlNode(Node):
             # nothing watching it. Placed before the disarm check below: an
             # in-progress breach is a bigger emergency than the ordinary
             # landed/not-landed question.
-            if self._check_geofence(during_land=True):
+            if (self._check_geofence(during_land=True)
+                    or self._check_estimate_health(during_land=True)):
                 return
 
             # Normal path: PX4 auto-disarms on its own once its own land

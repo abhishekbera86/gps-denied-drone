@@ -152,7 +152,37 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = OpenvinsOdometryBridge()
     try:
-        rclpy.spin(node)
+        # Manual spin_once loop, NOT plain rclpy.spin(node) (2026-07-13):
+        # confirmed live that under severe host CPU contention (load
+        # average 15+ on this project's dev machine, `make sim-gui`'s
+        # rviz2/Gazebo GPU rendering alone at 60%+ CPU), rclpy's own
+        # message-deserialization step (executors.py's
+        # `sub.handle.take_message(...)`, a pybind11 call into the DDS
+        # layer, BEFORE `_on_odometry` is ever reached) can raise
+        # `RuntimeError: Unable to convert call argument to Python
+        # object` — a known category of rclpy/CycloneDDS fragility under
+        # resource starvation, not a bug in this node's own logic. Plain
+        # `rclpy.spin()` lets that exception escape the whole spin loop
+        # and kills the process outright — which silently stops ALL
+        # vision data to PX4 for the rest of the flight (EKF2 falls back
+        # to dead-reckoning on whatever GPS/estimate it last had, with no
+        # warning). Catching it here and continuing keeps this node (and
+        # therefore vision fusion) alive through a transient DDS hiccup
+        # instead of a hard crash. Doesn't fix the underlying rclpy/DDS
+        # fragility (host contention is the real trigger — see README
+        # §12) — this is resilience, not a root-cause fix, and it only
+        # protects THIS node from dying; it does nothing if the same
+        # condition is bad enough to also kill camera_imu_bridge or
+        # run_subscribe_msckf. A mission-level watchdog that detects
+        # vision going silent regardless of WHICH piece failed and WHY is
+        # the complementary, more general fix — see offboard_control_node.py
+        # if/when that exists.
+        while rclpy.ok():
+            try:
+                rclpy.spin_once(node, timeout_sec=1.0)
+            except RuntimeError as exc:
+                node.get_logger().error(
+                    f'transient rclpy/DDS error, continuing: {exc}')
     except KeyboardInterrupt:
         pass
     finally:

@@ -46,6 +46,13 @@ offboard_control_node:
     # Added 2026-07-13 after AUTO_LAND flew a real vehicle into that wall —
     # see offboard_control_node.py's `_geofence_bounds`/`_check_geofence`.
     geofence_hard_limit_m: 3.75
+    # How long PX4's own xy_valid/v_xy_valid must stay continuously false
+    # before aborting — source-agnostic (GPS or vision), see
+    # offboard_control_node.py's `_check_estimate_health`. Added
+    # 2026-07-13 after a VIO pipeline node crashed mid-flight with nothing
+    # watching for it. Short: a single-tick flicker shouldn't end a
+    # flight, but a genuinely lost estimate should be caught fast.
+    estimate_invalid_abort_dwell_s: 1.5
 
 # ── square mission (make mission MISSION=square) ───────────────────────────
 square_mission:
@@ -73,3 +80,4 @@ square_mission:
     geofence_margin_m: 2.0             # bounding box of the centered square's corners, +2m each side
     geofence_height_margin_m: 1.5      # max climb above takeoff_height_m (m)
     geofence_hard_limit_m: 3.75        # see offboard_control_node's hover-profile comment above
+    estimate_invalid_abort_dwell_s: 1.5  # see offboard_control_node's hover-profile comment above

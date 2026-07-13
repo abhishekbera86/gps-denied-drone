@@ -618,6 +618,7 @@ without needing to redesign the config format itself.
 | `geofence_margin_m` | float | `2.0` | `1.0` | Geofence (§12 issue 24): horizontal margin added on every side of the current route's bounding box (origin + every queued waypoint — auto-derived, not a separately hand-maintained box; see `_geofence_bounds` in `offboard_control_node.py`). A position outside this box in ANY flying state, including `LAND` (§12 issue 33), aborts. |
 | `geofence_height_margin_m` | float | `1.5` | `1.0` | Geofence altitude cap: how far above the highest point the route actually visits (usually `takeoff_height_m`) the vehicle may climb before the same abort triggers. |
 | `geofence_hard_limit_m` | float | `3.75` | `10.0` (untested placeholder) | Geofence (§12 issue 33): an absolute x/y clamp on the bound above, independent of mission geometry — whichever of (bbox+margin) or (hard limit) is smaller wins. Sim's `3.75` is derived from `vio_test.sdf`'s actual fence position (±4.75m), guaranteeing ≥1m wall clearance regardless of any mission's own margin math. hw's `10.0` is a placeholder, NOT derived from a real test area — must be retuned before free flight. |
+| `estimate_invalid_abort_dwell_s` | float | `1.5` | `2.0` | Estimate-health watchdog (§12 issue 34): how long PX4's own `xy_valid`/`v_xy_valid` must stay continuously false before aborting — source-agnostic (GPS or vision), see `_check_estimate_health` in `offboard_control_node.py`. Checked in every flying state including `LAND`, same during-land force-disarm shape as the geofence. |
 
 ### `square_mission`
 
@@ -1510,10 +1511,74 @@ geometry).
 **Still open**: this closes a real safety gap, but does not fix VIO
 accuracy/divergence itself (§12 issues 29-32) — it makes the WORST case
 (an undetected divergence during landing) survivable instead of
-catastrophic. The user separately asked about a broader in-flight
-vision-health watchdog (detect if vision data stops or degrades AT ANY
-point in flight, not just during landing) — noted as follow-up work, not
-yet built as of this entry.
+catastrophic. See issue 34 for the broader in-flight watchdog built the
+same day.
+
+**34. In-flight estimate-health watchdog — built the same day issue 33
+was fixed, after a concrete, live crash proved it necessary.** A VIO
+pipeline node (`openvins_odometry_bridge`) crashed outright mid-flight —
+`RuntimeError: Unable to convert call argument to Python object`, raised
+INSIDE `rclpy`'s own message-deserialization step
+(`executors.py`'s `sub.handle.take_message(...)`, before the node's own
+callback is ever reached) — silently stopping all vision data to PX4 for
+the rest of that flight, with nothing watching for it. Traced to severe
+host CPU contention (load average 15+ measured live, `rviz2`'s GPU
+rendering alone at 60%+ CPU) — a known category of rclpy/CycloneDDS
+fragility under resource starvation, not a logic bug in the bridge's own
+code. That flight happened to still land only mildly drifted; nothing
+would have caught a worse outcome.
+
+Two complementary fixes:
+- **Bridge resilience** (`openvins_odometry_bridge.py`): replaced plain
+  `rclpy.spin(node)` (lets any uncaught exception kill the whole process)
+  with a manual `spin_once` loop that catches `RuntimeError` and keeps
+  going — survives a single transient DDS hiccup instead of dying
+  outright. Doesn't fix the underlying rclpy/DDS fragility (host
+  contention is the real trigger) and only protects this one node — see
+  the next fix for the general case.
+- **Estimate-health watchdog** (`offboard_control_node.py`, new
+  `_check_estimate_health`) — the general, source-agnostic version:
+  reads PX4's OWN `VehicleLocalPosition.xy_valid`/`v_xy_valid` — its
+  internal judgement of whether the current fused estimate is
+  trustworthy, already true regardless of which aiding source produced
+  it. Deliberately NOT vision-specific (doesn't watch
+  `/fmu/in/vehicle_visual_odometry` or any vision topic directly) —
+  keeps this class unaware of whether GPS or vision is active, the same
+  invariant `common_control`/`common_missions` maintain everywhere else
+  in this project. Fires on ANY sustained estimate-health problem — a
+  crashed bridge, a wedged DDS agent, or genuine divergence bad enough
+  that PX4 itself stops trusting the fusion all trip the same flag.
+  Same TAKEOFF/WAYPOINTS/HOVER/LAND coverage and the same
+  during-land-force-disarms-as-last-resort shape as issue 33's geofence
+  (including its own independent two-latch pair, same compounding-breach
+  reasoning). One difference: a short dwell
+  (`estimate_invalid_abort_dwell_s`, `1.5s` sim / `2.0s` hw) before
+  aborting — a single-tick validity flicker shouldn't end a flight by
+  itself the way a hard position-bound breach should.
+
+**A real, separate bug was found and fixed while wiring the new param**:
+`hw_params.yaml`'s `square_mission` section was missing
+`geofence_hard_limit_m` entirely (added in issue 33, only added to the
+hover profile's section by mistake) — would have failed loudly at
+startup (this project's params have no silent code defaults) rather than
+silently misbehaving, but still a real oversight, now fixed.
+
+**Verified live, twice, for two different things**:
+- Combined test: killed GPS fusion via MAVLink mid-`square`-mission
+  (directly simulating "GPS is not there," the user's other question)
+  with vision not running either — dead-reckoning drift reached the
+  geofence bound BEFORE the estimate-health dwell elapsed; geofence
+  caught it, transitioned to LAND, and the during-land emergency check
+  force-disarmed on the next tick. Both safety layers worked together.
+- Isolated test: killed GPS mid-`hover` (vehicle not commanded to move,
+  so drift stays small and slow) with an extended test-only hover
+  duration to give the watchdog room to react without the mission just
+  landing normally first. `xy_valid`/`v_xy_valid` went false ~6.7s after
+  the kill (matching PX4's own 5s dead-reckoning timeout + this fix's
+  1.5s dwell), the normal path aborted to LAND, and the independent
+  during-land check fired on the very next control tick and
+  force-disarmed — a clean, geofence-free demonstration of this fix
+  specifically, not just the two working together.
 
 ---
 
