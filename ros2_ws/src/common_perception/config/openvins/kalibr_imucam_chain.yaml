@@ -6,12 +6,17 @@
 #
 # Intrinsics DERIVED (not guessed) from the sensor's actual declared SDF
 # parameters (docker/px4_sitl_models/d435i/model.sdf):
-#   horizontal_fov=1.204 rad, resolution=1280x720
-#   fx = fy = width / (2*tan(hfov/2)) = 931.5  (Gazebo's simple pinhole
-#     camera assumes square pixels / fx=fy — the real camera_info topic
-#     once ros_gz_bridge is live is the ultimate source of truth; recheck
-#     against it during Milestone B tuning)
-#   cx, cy = width/2, height/2 = 640, 360
+#   horizontal_fov=1.204 rad, resolution=640x360 (1280x720 -> 640x360,
+#     2026-07-13 — the iGPU this project runs on can't render 1280x720 at
+#     a real 30Hz, measured live as ~19-21Hz with stalls up to 380ms; see
+#     model.sdf's color-sensor comment for the full measurement and why
+#     640x360 specifically, not 640x480, preserves the exact 16:9 aspect)
+#   fx = fy = width / (2*tan(hfov/2)) = 465.7  (exactly half of the
+#     1280x720 config's 931.5, since width halved and hfov/aspect did not
+#     — Gazebo's simple pinhole camera assumes square pixels / fx=fy — the
+#     real camera_info topic once ros_gz_bridge is live is the ultimate
+#     source of truth; recheck against it if retuning further)
+#   cx, cy = width/2, height/2 = 320, 180
 #   distortion: none — Gazebo's basic camera model has no lens distortion.
 #
 # Extrinsics (T_cam_imu):
@@ -65,7 +70,7 @@ cam0:
   camera_model: pinhole
   distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
   distortion_model: radtan
-  intrinsics: [931.5, 931.5, 640.0, 360.0]
-  resolution: [1280, 720]
+  intrinsics: [465.7, 465.7, 320.0, 180.0]
+  resolution: [640, 360]
   rostopic: /camera/camera/color/image_raw
   timeshift_cam_imu: 0.0

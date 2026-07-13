@@ -147,7 +147,14 @@ grid_x: 5
 grid_y: 5
 min_px_dist: 15
 knn_ratio: 0.70
-track_frequency: 30.0 # matches the bridged d435i color sensor's 30 Hz Gazebo update rate
+track_frequency: 30.0 # a CEILING (OpenVINS drops frames arriving faster than
+# this — ROS2Visualizer.cpp's callback_monocular), not an expected/assumed
+# rate — confirmed in source 2026-07-13. The d435i color sensor is
+# configured for 30Hz (matches this ceiling) but this project's iGPU can't
+# actually render it that fast (measured ~19-21Hz at 1280x720, jittery);
+# lowering resolution to 640x360 (model.sdf) addresses the real rendering
+# bottleneck directly, so this ceiling doesn't need to change to match —
+# it was never the actual constraint.
 downsample_cameras: false
 num_opencv_threads: 4
 histogram_method: "HISTOGRAM"

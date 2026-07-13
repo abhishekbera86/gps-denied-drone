@@ -55,16 +55,37 @@
       </collision>
 
       <!-- Color (RGB) sensor. D435i datasheet: 69x42 deg (H x V) FOV,
-           1920x1080 max — 1280x720 used here (realsense-ros's common
-           default color resolution for this camera). -->
+           1920x1080 max.
+
+           1280x720 -> 640x360 (2026-07-13): this project's iGPU (ThinkPad
+           W541, Intel HD 4600) can't render this sensor at its configured
+           30Hz — measured live at a genuine real_time_factor of 1.0 (not
+           a lockstep/RTF problem, a rendering throughput one): only
+           ~19-21Hz average, AND badly jittery (frame gaps measured
+           21ms-380ms, not a steady cadence) — a 380ms stall is a
+           near-third-of-a-second gap with no visual update, which breaks
+           the KLT tracker's small-motion assumption and forces OpenVINS
+           to dead-reckon on IMU alone across it. Flagged as a likely
+           contributor to real square-mission position drift (1.7-5.8m
+           over a ~12m flight across 3 test flights — see README §12).
+           640x360 (NOT 640x480 — that would silently change the aspect
+           ratio 16:9->4:3 and distort the vertical FOV; 640x360 is an
+           exact half-scale of 1280x720, same 16:9) is a 4x smaller
+           render (cost scales with pixel count). horizontal_fov is
+           UNCHANGED (same real lens FOV, just fewer pixels across it) —
+           intrinsics in kalibr_imucam_chain.yaml scale down accordingly
+           (fx/fy/cx/cy all exactly halve) since horizontal_fov and aspect
+           ratio are both unchanged: re-derived, not guessed, from the
+           same fx=width/(2*tan(hfov/2)) formula the original 1280x720
+           values came from. -->
       <sensor name="color" type="camera">
         <gz_frame_id>camera_link</gz_frame_id>
         <pose>0 0 0 0 0 0</pose>
         <camera>
           <horizontal_fov>1.204</horizontal_fov>
           <image>
-            <width>1280</width>
-            <height>720</height>
+            <width>640</width>
+            <height>360</height>
           </image>
           <clip>
             <near>0.1</near>
@@ -80,7 +101,25 @@
            (H x V) FOV, ~0.2-10 m range — 848x480 used here (realsense-ros's
            common default depth resolution for this camera). Not consumed
            by OpenVINS's mono pipeline; bridged for topic-name parity with
-           real hardware and future Nav2/obstacle-avoidance use. -->
+           real hardware and future Nav2/obstacle-avoidance use.
+
+           update_rate 30 -> 5 (2026-07-13): this project's own iGPU
+           (ThinkPad W541, Intel HD 4600) can't render both cameras at
+           30Hz — measured live: the COLOR camera (the one OpenVINS
+           actually tracks against) delivered only ~19Hz average with
+           depth also requesting 30Hz, despite Gazebo's simulated CLOCK
+           holding a true real_time_factor of 1.0 (confirmed via
+           `gz topic -e -t /world/<world>/stats`) — this is a rendering
+           throughput bottleneck, not a lockstep/RTF problem, and it
+           silently violated estimator_config.yaml's `track_frequency:
+           30.0` assumption, a real, measured inconsistency flagged as a
+           plausible contributor to real square-mission position drift
+           (README §12). Since nothing currently consumes this depth
+           stream at all, freeing its render budget for color is a
+           pure win — 5Hz is still enough to prove the topic/pipeline for
+           its intended future Nav2/obstacle-avoidance use. Retune (or
+           remove this override) once something actually depends on depth
+           timing. -->
       <sensor name="depth" type="depth_camera">
         <gz_frame_id>camera_link</gz_frame_id>
         <pose>0 0 0 0 0 0</pose>
@@ -97,7 +136,7 @@
           </clip>
         </camera>
         <always_on>1</always_on>
-        <update_rate>30</update_rate>
+        <update_rate>5</update_rate>
         <visualize>true</visualize>
         <topic>depth_camera</topic>
       </sensor>
