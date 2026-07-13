@@ -80,16 +80,21 @@ class OffboardControlNode(Node):
     GEOFENCE: bounds are derived automatically from the mission's own route
     (the same waypoints `build_waypoints()` already returns — origin
     included), not a separately hand-maintained box. `geofence_margin_m` is
-    added on every horizontal side of that route's bounding box;
+    added on every horizontal side of that route's bounding box, then
+    clamped to `geofence_hard_limit_m` — a physical wall-clearance limit
+    independent of any mission's own geometry (see `_geofence_bounds`).
     `geofence_height_margin_m` caps how far above the intended cruise/
     takeoff height the vehicle may climb. This makes the fence "modular" —
     it automatically follows whatever a mission's own `side_length_m`/
     `area_length_m`+`area_width_m`/etc. describe, and needs no code change
-    when a mission's geometry params change or a new mission is added; see
-    `_geofence_bounds`. A breach in any state that's actually flying
-    (TAKEOFF/WAYPOINTS/HOVER) aborts immediately via `_land()` — the same
-    AUTO_LAND path a normal mission end uses, backed by the same
-    estimate-independent disarm fallback below.
+    when a mission's geometry params change or a new mission is added.
+    Checked in EVERY flying state, including LAND: a breach during
+    TAKEOFF/WAYPOINTS/HOVER aborts via `_land()` (the same AUTO_LAND path
+    a normal mission end uses); a breach ALREADY during LAND — PX4's own
+    AUTO_LAND controller diverging with nothing watching it, confirmed
+    live 2026-07-13 flying the real vehicle into the fenced area's wall —
+    force-disarms immediately instead, since re-issuing `_land()` at that
+    point is a no-op (see `_check_geofence`'s `during_land` docstring).
     """
 
     def __init__(self, node_name: str = 'offboard_control_node') -> None:
@@ -106,6 +111,7 @@ class OffboardControlNode(Node):
             'land_disarm_max_timeout_s')
         self._geofence_margin_m = self._require_param('geofence_margin_m')
         self._geofence_height_margin_m = self._require_param('geofence_height_margin_m')
+        self._geofence_hard_limit_m = self._require_param('geofence_hard_limit_m')
 
         # NED frame: down is positive z, so climbing means z becomes negative.
         self._target_z = -abs(self._takeoff_height_m)
@@ -144,10 +150,21 @@ class OffboardControlNode(Node):
         self._last_disarm_attempt_time = None
         self._logged_land_disarm_timeout_warning = False
 
-        # Geofence breach bookkeeping — `_geofence_breached` latches so the
-        # abort (land) is only triggered/logged once, not every tick spent
-        # descending back through the boundary.
+        # Geofence breach bookkeeping — TWO independent latches, not one.
+        # `_geofence_breached` covers the ordinary TAKEOFF/WAYPOINTS/HOVER
+        # abort-to-land path, latched so it only triggers/logs once, not
+        # every tick spent descending back through the boundary.
+        # `_geofence_land_emergency` covers the SEPARATE during_land
+        # force-disarm path — deliberately NOT the same flag: a mission
+        # that breaches mid-cruise (setting `_geofence_breached` and
+        # transitioning to LAND via the normal path) must still be able to
+        # trigger the emergency force-disarm if AUTO_LAND THEN ALSO
+        # diverges further during the resulting descent — a real,
+        # plausible compounding failure this shares no latch with, or the
+        # emergency path would be silently blocked by the earlier, milder
+        # breach that led into LAND in the first place.
         self._geofence_breached = False
+        self._geofence_land_emergency = False
 
         # NED (x, y, z, yaw) targets flown in order after takeoff; empty
         # means the plain takeoff-hover-land profile.
@@ -160,7 +177,8 @@ class OffboardControlNode(Node):
             f'OffboardControlNode starting: takeoff_height={self._takeoff_height_m}m, '
             f'hover={self._hover_seconds}s, max_velocity={self._max_velocity_m_s}m/s, '
             f'geofence_margin={self._geofence_margin_m}m, '
-            f'geofence_height_margin={self._geofence_height_margin_m}m')
+            f'geofence_height_margin={self._geofence_height_margin_m}m, '
+            f'geofence_hard_limit={self._geofence_hard_limit_m}m')
 
     # ── Parameter loading ────────────────────────────────────────────────
     def _require_param(self, name: str) -> float:
@@ -274,18 +292,33 @@ class OffboardControlNode(Node):
         geofence_height_margin_m`, i.e. how much higher than the highest
         point this route actually visits the vehicle may climb before it's
         considered a breach.
+
+        The horizontal (x/y) box is then CLAMPED to
+        `geofence_hard_limit_m` — a physical safety limit independent of
+        mission geometry, e.g. "the nearest wall/prop is always at least
+        1m past this" (2026-07-13: repeated crashes into the fenced test
+        area's actual boundary, one of them because a mission's own
+        margin math alone put the soft bound too close to it). Whichever
+        of (mission bbox + margin) or (hard limit) is MORE restrictive
+        wins — a generously-margined mission can never accidentally widen
+        the fence past the known-safe physical limit, and a tightly-
+        margined one still gets its own tighter bound if that's smaller.
         """
         xs = [0.0] + [wp[0] for wp in self._waypoints]
         ys = [0.0] + [wp[1] for wp in self._waypoints]
         zs = [self._target_z] + [wp[2] for wp in self._waypoints]
+        x_min = max(min(xs) - self._geofence_margin_m, -self._geofence_hard_limit_m)
+        x_max = min(max(xs) + self._geofence_margin_m, self._geofence_hard_limit_m)
+        y_min = max(min(ys) - self._geofence_margin_m, -self._geofence_hard_limit_m)
+        y_max = min(max(ys) + self._geofence_margin_m, self._geofence_hard_limit_m)
         return (
-            (min(xs) - self._geofence_margin_m, max(xs) + self._geofence_margin_m),
-            (min(ys) - self._geofence_margin_m, max(ys) + self._geofence_margin_m),
+            (x_min, x_max),
+            (y_min, y_max),
             min(zs) - self._geofence_height_margin_m,
         )
 
-    def _check_geofence(self) -> bool:
-        """Abort to LAND on a breach; return True once one is latched.
+    def _check_geofence(self, *, during_land: bool = False) -> bool:
+        """Abort on a breach; return True once one is latched.
 
         Deliberately estimate-based (there is no other position source in
         this architecture) and deliberately immediate — no dwell/debounce.
@@ -294,19 +327,52 @@ class OffboardControlNode(Node):
         the fenced/textured area and continuing at speed until it hits the
         ground — reported 2026-07-09) is not something to wait out for
         confirmation.
+
+        `during_land=True` (called from FlightState.LAND) uses a DIFFERENT
+        response: `_land()` is a no-op here — PX4's own AUTO_LAND is
+        already the active mode, so re-commanding it changes nothing. This
+        branch exists because that gap was real: FlightState.LAND was
+        previously the ONE flying state with no geofence check at all, and
+        a mission that reported "all waypoints reached — landing" then
+        drove the real vehicle into the fenced area's actual wall during
+        the unmonitored AUTO_LAND descent (2026-07-13) — PX4's own
+        landing controller, not this project's code, chasing a diverging
+        estimate with nothing watching it. There is no clean way to hand
+        AUTO_LAND a corrected trajectory from here, and re-attempting a
+        fresh `_land()`/RTL would still be steering off the same corrupted
+        estimate that caused the breach — so this is a genuine last resort:
+        force-disarm immediately. At this project's low mission altitudes
+        (2m) an uncontrolled drop is short and, on the physical evidence
+        available, less dangerous than continuing to fly toward/through a
+        wall. Ends the flight (`FlightState.DONE`) rather than trying to
+        recover — a human should inspect the vehicle after this fires.
         """
-        if self._geofence_breached:
+        if during_land:
+            if self._geofence_land_emergency:
+                return True
+        elif self._geofence_breached:
             return True
         (x_min, x_max), (y_min, y_max), z_min = self._geofence_bounds()
         pos = self._vehicle_local_position
         if pos.x < x_min or pos.x > x_max or pos.y < y_min or pos.y > y_max or pos.z < z_min:
-            self._geofence_breached = True
-            self.get_logger().error(
-                f'GEOFENCE BREACH: position ({pos.x:.1f}, {pos.y:.1f}, {pos.z:.1f}) is '
-                f'outside x=[{x_min:.1f},{x_max:.1f}] y=[{y_min:.1f},{y_max:.1f}] '
-                f'z>={z_min:.1f} (NED) — aborting mission, switching to LAND immediately.')
-            self._land()
-            self._state = FlightState.LAND
+            if during_land:
+                self._geofence_land_emergency = True
+                self.get_logger().error(
+                    f'GEOFENCE BREACH DURING LANDING: position ({pos.x:.1f}, {pos.y:.1f}, '
+                    f'{pos.z:.1f}) is outside x=[{x_min:.1f},{x_max:.1f}] '
+                    f'y=[{y_min:.1f},{y_max:.1f}] z>={z_min:.1f} (NED) — AUTO_LAND is '
+                    f'flying outside the safe area with no correction possible from here. '
+                    f'Force-disarming immediately (last resort).')
+                self._disarm(reason='geofence breach during landing')
+                self._state = FlightState.DONE
+            else:
+                self._geofence_breached = True
+                self.get_logger().error(
+                    f'GEOFENCE BREACH: position ({pos.x:.1f}, {pos.y:.1f}, {pos.z:.1f}) is '
+                    f'outside x=[{x_min:.1f},{x_max:.1f}] y=[{y_min:.1f},{y_max:.1f}] '
+                    f'z>={z_min:.1f} (NED) — aborting mission, switching to LAND immediately.')
+                self._land()
+                self._state = FlightState.LAND
             return True
         return False
 
@@ -333,7 +399,7 @@ class OffboardControlNode(Node):
             VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
         self.get_logger().info('Arm command sent')
 
-    def _disarm(self) -> None:
+    def _disarm(self, reason: str = 'post-landing fallback') -> None:
         # param2=21196 is PX4's documented "force" magic value for
         # VEHICLE_CMD_COMPONENT_ARM_DISARM (see Commander.cpp's own CLI
         # handler for `disarm -f`, which sets this same value) — REQUIRED
@@ -353,7 +419,7 @@ class OffboardControlNode(Node):
         # uses for exactly this failure mode.
         self._publish_vehicle_command(
             VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0, param2=21196.0)
-        self.get_logger().info('Disarm command sent (post-landing fallback, forced)')
+        self.get_logger().info(f'Disarm command sent ({reason}, forced)')
 
     def _engage_offboard_mode(self) -> None:
         self._publish_vehicle_command(
@@ -448,6 +514,15 @@ class OffboardControlNode(Node):
             return
 
         if self._state == FlightState.LAND:
+            # Checked here too (see _check_geofence's during_land docstring)
+            # — PX4's own AUTO_LAND is flying this phase, not this node, and
+            # it has diverged into the fenced area's actual wall before with
+            # nothing watching it. Placed before the disarm check below: an
+            # in-progress breach is a bigger emergency than the ordinary
+            # landed/not-landed question.
+            if self._check_geofence(during_land=True):
+                return
+
             # Normal path: PX4 auto-disarms on its own once its own land
             # detector confirms landed. Preferred, and — absent the bug
             # below — wins the race against the fallback dwell timer, since

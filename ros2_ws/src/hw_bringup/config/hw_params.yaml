@@ -25,6 +25,12 @@ offboard_control_node:
     # inconvenience, it's a real vehicle leaving a controlled test area.
     geofence_margin_m: 1.0             # horizontal margin beyond the route's bounding box (m)
     geofence_height_margin_m: 1.0      # max climb above the highest point the route visits (m)
+    # UNTESTED PLACEHOLDER, not derived from a real measured test area (sim's
+    # 3.75 IS derived, from vio_test.sdf's actual fence position — there is
+    # no equivalent fixed geometry here yet). MUST be set to
+    # (nearest real wall/obstacle distance from takeoff point) - 1.0m before
+    # any free flight — see offboard_control_node.py's `_geofence_bounds`.
+    geofence_hard_limit_m: 10.0
 
 # ── square mission (Phase 4: action:=mission mission:=square) ──────────────
 square_mission:

@@ -615,8 +615,9 @@ without needing to redesign the config format itself.
 | `max_velocity_m_s` | float | `1.0` (hover) / `0.8` (missions) | `0.5` (hover) / `0.1` (missions) | Cruise speed cap toward any setpoint (takeoff, hover position, or a waypoint), in m/s. Without this, PX4's own offboard position controller accelerates toward every setpoint at its internal velocity limit — much faster than useful for watching a mission or a first real flight. Implemented as a feed-forward velocity vector aimed at the target, magnitude-capped at this value (`_capped_velocity_toward` in `offboard_control_node.py`) — not a PX4 firmware parameter. **Don't set this below ~0.5 m/s for `VIO_BACKEND=openvins` flights** — a real, confirmed failure mode: too slow starves monocular VIO of the acceleration events it needs to keep its scale/bias estimate converged, and a long, near-constant-velocity flight lets that error build up for the whole mission (§8, §12 issue 17). |
 | `land_disarm_low_throttle_dwell_s` | float | `3.0` | `4.0` | Post-landing disarm fallback (§8, §12 issue 21): how long PX4's own actuator thrust must stay continuously low before this node explicitly force-disarms, used only if PX4's own auto-disarm doesn't happen on its own. Any single higher-throttle reading resets this to zero. |
 | `land_disarm_max_timeout_s` | float | `60.0` | `90.0` | Ceiling on how long to wait for the condition above — if exceeded, this node gives up rather than ever disarming based on elapsed time alone, and logs an error requiring manual `px4-commander disarm -f`. Never the trigger by itself, only a bound on the wait. |
-| `geofence_margin_m` | float | `2.0` | `1.0` | Geofence (§12 issue 24): horizontal margin added on every side of the current route's bounding box (origin + every queued waypoint — auto-derived, not a separately hand-maintained box; see `_geofence_bounds` in `offboard_control_node.py`). A position outside this box in any flying state (TAKEOFF/WAYPOINTS/HOVER) aborts immediately to `LAND`. |
+| `geofence_margin_m` | float | `2.0` | `1.0` | Geofence (§12 issue 24): horizontal margin added on every side of the current route's bounding box (origin + every queued waypoint — auto-derived, not a separately hand-maintained box; see `_geofence_bounds` in `offboard_control_node.py`). A position outside this box in ANY flying state, including `LAND` (§12 issue 33), aborts. |
 | `geofence_height_margin_m` | float | `1.5` | `1.0` | Geofence altitude cap: how far above the highest point the route actually visits (usually `takeoff_height_m`) the vehicle may climb before the same abort triggers. |
+| `geofence_hard_limit_m` | float | `3.75` | `10.0` (untested placeholder) | Geofence (§12 issue 33): an absolute x/y clamp on the bound above, independent of mission geometry — whichever of (bbox+margin) or (hard limit) is smaller wins. Sim's `3.75` is derived from `vio_test.sdf`'s actual fence position (±4.75m), guaranteeing ≥1m wall clearance regardless of any mission's own margin math. hw's `10.0` is a placeholder, NOT derived from a real test area — must be retuned before free flight. |
 
 ### `square_mission`
 
@@ -1451,6 +1452,68 @@ subscribes to `vehicle_status_v1` and clears its path buffer on every
 disarmed→armed transition, so each flight draws its own trace. Confirmed
 live across two consecutive flights (a hover then a `square` mission) —
 the reset fired exactly once per arm.
+
+**33. `FlightState.LAND` had NO geofence check at all — confirmed as the
+direct cause of a real vehicle flying into the fenced area's wall during
+landing (2026-07-13).** `_check_geofence()` was called from
+`TAKEOFF`/`WAYPOINTS`/`HOVER` but never from `LAND` — once a mission
+reached "all waypoints reached — landing," PX4's own `AUTO_LAND`
+controller took over the descent with zero further oversight from this
+project's code. This project already has a documented prior incident of
+`AUTO_LAND` flying away when its position estimate diverges during
+descent (§8, the extrinsics saga); with no geofence watching that phase,
+nothing stopped it from flying the real vehicle into a wall — reported by
+the user across repeated vision-mode test flights, one of which hit a
+fence boundary specifically during landing.
+
+Two-part fix in `offboard_control_node.py`:
+- **`geofence_hard_limit_m`** — a NEW required param, an absolute x/y
+  clamp on `_geofence_bounds()`'s output, independent of any mission's own
+  waypoint-bbox-derived margin. Whichever of (mission bbox + margin) or
+  (hard limit) is more restrictive wins, so a generously-margined mission
+  can never accidentally widen the fence past a known-safe physical
+  limit. Set to `3.75` in `sim_params.yaml` (`vio_test.sdf`'s fence props
+  sit at ±4.75m — this guarantees ≥1m wall clearance regardless of
+  mission geometry); `10.0` as an explicitly-flagged UNTESTED placeholder
+  in `hw_params.yaml` (no fixed test-area geometry to derive it from yet
+  — must be retuned to the real test area before free flight).
+- **`_check_geofence(during_land=True)`**, now called from
+  `FlightState.LAND` too. Its response is deliberately DIFFERENT from the
+  normal path: `_land()` is a no-op there (`AUTO_LAND` is already the
+  active mode — re-commanding it changes nothing), and there's no way to
+  hand it a corrected trajectory from here, so this is a genuine last
+  resort — **force-disarm immediately** (`_disarm()`, PX4's documented
+  force-disarm magic value, already used by the existing post-landing
+  fallback). At this project's low mission altitudes (2m) an uncontrolled
+  drop is short and, on the evidence available, safer than continuing to
+  fly toward/through a wall. Ends the flight (`FlightState.DONE`) rather
+  than attempting recovery — a human should inspect the vehicle after
+  this fires.
+
+**A real bug was caught and fixed while building this**: the two response
+paths originally shared one latch flag (`_geofence_breached`), which meant
+a mid-cruise breach (setting the flag, transitioning normally to LAND)
+would silently BLOCK the during-land emergency check from ever firing if
+`AUTO_LAND` then diverged further during the resulting descent — exactly
+the compounding failure this fix exists to catch. Fixed with two
+independent latches (`_geofence_breached` / `_geofence_land_emergency`).
+Verified live: teleporting the vehicle out of bounds mid-flight (Gazebo's
+own `set_pose` service) triggered the normal breach-and-land response,
+and on the VERY NEXT control tick (100ms later) the during-land check
+independently caught the still-out-of-bounds position and force-disarmed
+— confirming the compounding scenario the latch fix targets actually
+works end to end, not just in isolation. A normal, uninterrupted `square`
+mission was re-verified clean after every change in this fix (no
+false-positive triggers from the new hard limit at this mission's normal
+geometry).
+
+**Still open**: this closes a real safety gap, but does not fix VIO
+accuracy/divergence itself (§12 issues 29-32) — it makes the WORST case
+(an undetected divergence during landing) survivable instead of
+catastrophic. The user separately asked about a broader in-flight
+vision-health watchdog (detect if vision data stops or degrades AT ANY
+point in flight, not just during landing) — noted as follow-up work, not
+yet built as of this entry.
 
 ---
 
