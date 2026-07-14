@@ -72,7 +72,10 @@ steps.
   adapter is all you need in addition — see [step 3](#wiring)'s optional
   Link 2.
 - A microSD card (or NVMe, if your Orange Pi 5 Plus carrier board
-  supports it) for **Ubuntu 22.04** on the Orange Pi 5 Plus.
+  supports it) for a vendor/board-appropriate Ubuntu image on the Orange
+  Pi 5 Plus — the exact version (22.04, 24.04, ...) doesn't matter, since
+  everything this project runs lives inside Docker; see
+  [step 6](#opi-setup) for why.
 - Props, a battery, a safe open outdoor test area, and normal RC safety
   gear — an RC transmitter with a hardware kill switch is strongly
   recommended even though this stack flies offboard (see
@@ -350,13 +353,31 @@ see [Reference](reference.md) for the full variable list.
 
 ## 6. Set up the Orange Pi
 
-1. **Download Ubuntu 22.04 for the Orange Pi 5 Plus specifically** — from
-   Orange Pi's own official downloads (orangepi.net's product page for
-   the 5 Plus, "Official Tools/OS" section), NOT a generic Ubuntu ARM64
-   ISO. Single-board computers need a vendor-provided image with the
-   correct kernel/bootloader/device-tree for that exact board — a generic
-   image will not boot correctly (wrong kernel = no working peripherals,
-   possibly no boot at all).
+**The host Ubuntu version (22.04 vs. 24.04 vs. whatever else) does not
+need to match anything else in this project.** Every ROS 2/Humble/build
+tool this stack actually runs lives *inside* Docker containers built
+from `ros:humble-ros-base` (itself Ubuntu 22.04-based) — that's fixed by
+the Dockerfile regardless of what the host runs, and Docker isolates it
+completely. The host only needs to (a) run Docker correctly and (b) have
+working USB/serial device support at the kernel level — neither of those
+is an Ubuntu-version requirement as such. If you've already got a
+24.04 (or other) image on your board, there's no need to reflash for
+this project specifically.
+
+1. **Download a vendor/board-appropriate image for the Orange Pi 5
+   Plus** — from Orange Pi's own official downloads (orangepi.net's
+   product page for the 5 Plus, "Official Tools/OS" section) or a
+   well-established community image for this SoC (e.g. the
+   `ubuntu-rockchip` project), NOT a generic Ubuntu ARM64 ISO built for
+   different hardware. Single-board computers need an image with the
+   correct kernel/bootloader/device-tree for that exact board — a
+   mismatched generic image will not boot correctly (wrong kernel = no
+   working peripherals, possibly no boot at all). This guide was
+   authored assuming 22.04; if you're on a different version already,
+   the [dry run](#dry-run)'s device-enumeration steps are exactly what
+   will catch it if USB/serial support turns out to behave differently
+   on your specific image — treat that as the real verification, not
+   this step's version number.
 2. **Flash it** to your microSD/NVMe using `balenaEtcher`, `dd`, or
    Orange Pi's own recommended flashing tool (their download page names
    one) — from another Linux/Mac/Windows machine, not the Orange Pi
@@ -384,10 +405,13 @@ see [Reference](reference.md) for the full variable list.
    ```
 7. **Confirm you actually have an ARM64 board booted correctly** before
    going any further — this catches a wrong-image flash immediately
-   rather than partway through a long Docker build:
+   rather than partway through a long Docker build. The architecture
+   check matters; the exact Ubuntu version doesn't (see this section's
+   intro) — just confirm it's a real, sane Ubuntu release, whatever
+   version:
    ```bash
-   uname -m        # expect: aarch64
-   cat /etc/os-release   # expect: Ubuntu 22.04 (jammy)
+   uname -m              # expect: aarch64
+   cat /etc/os-release   # expect some Ubuntu release — 22.04, 24.04, etc. are all fine
    ```
 8. **Install Docker** (same install this repo's
    [Setup Guide](setup-guide.md#sec-3) uses on the dev host — nothing
