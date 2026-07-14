@@ -146,15 +146,35 @@ USB-CDC device like this — **confirm, don't assume**, see
 This link needs its own physical connection, separate from Link 1. Two
 options, in order of how strongly this guide recommends them:
 
-**Option A (recommended for a first bring-up): USB-to-TTY serial
-adapter.** A cheap 3.3V-logic USB-to-serial adapter (FTDI, CP2102, or
-similar — confirm it's a **3.3V** part, not 5V-only, before buying) gives
-you a TX/RX/GND breakout on three wires and a plain USB-A plug on the
-other end for the Orange Pi's second USB port. Wire the adapter's 3 pins
-to the Pixhawk 6C's **TELEM2** port using the pinout below, and plug the
-adapter into any spare Orange Pi USB port. This is the safer default
-specifically because a wiring mistake here damages a $5 adapter, not
-either of your two real boards.
+**Option A (recommended for a first bring-up, and what you already
+have): a USB-to-TTL adapter.** This is the same class of device whether
+it's sold as "USB-to-TTY," "USB-to-TTL," or "USB-to-serial" — an FTDI,
+CP2102, CH340G, or PL2303-based module, all functionally interchangeable
+for this purpose. If you already own one of these, use it — it's the
+safer default specifically because a wiring mistake here damages a $5
+module, not either of your two real boards.
+
+Typical USB-to-TTL modules break out 4-6 pins, usually silkscreen-labeled
+on the board itself:
+
+| Module pin (typical labels) | What it is | Wire to |
+|---|---|---|
+| `TXD` | Module transmit | Pixhawk TELEM2 pin 3 (`UART5_RX`) — see crossover note below |
+| `RXD` | Module receive | Pixhawk TELEM2 pin 2 (`UART5_TX`) — see crossover note below |
+| `GND` | Ground | Pixhawk TELEM2 pin 6 (`GND`) — required |
+| `VCC` / `5V` | Module power (from USB) | **Leave disconnected from the Pixhawk** — the module gets its own power from the Orange Pi's USB port; do not also feed TELEM2 pin 1 from it |
+| `3V3` (if present, separate from `VCC`) | Some modules expose a regulated 3.3V rail | Leave disconnected — same reasoning as `VCC` above; you're not powering anything from this adapter, only carrying signal |
+| `CTS`/`DTR`/`RTS` (if present) | Flow control / auto-reset lines (the DTR/RTS-to-reset wiring some modules include is an Arduino convention, irrelevant here) | Leave disconnected |
+
+**Check for a voltage-select jumper or switch before connecting
+anything** — many of these modules can output either 3.3V or 5V logic on
+`TXD`, selected by a physical jumper (often labeled `3V3`/`5V` next to a
+2-3 pin header) or occasionally a slide switch. **Set it to 3.3V.**
+Pixhawk 6C's TELEM ports are 3.3V logic (confirmed in the pinout table
+below) — feeding a 5V logic signal into a 3.3V input is a real way to
+damage the Pixhawk's UART, not just a "might not work" situation. If your
+specific module has no such jumper, check its datasheet/listing for
+whether it's a fixed-3.3V or fixed-5V part before wiring it up at all.
 
 **Option B (advanced): direct GPIO UART wiring**, Orange Pi's 40-pin
 header straight to Pixhawk's TELEM2, no adapter in between. Only do this
