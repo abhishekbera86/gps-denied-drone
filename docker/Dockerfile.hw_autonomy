@@ -1,0 +1,175 @@
+# =============================================================================
+# Dockerfile.hw_autonomy — ROS 2 Humble + PX4 uXRCE-DDS bridge + RealSense,
+# for the Orange Pi 5 Plus companion computer (Phase 4, ARM64)
+# =============================================================================
+# UNTESTED — authored 2026-07-14, no real hardware has built or run this yet.
+# Follow resource/hardware-bringup-gps.md (build it first) and
+# resource/hardware-bringup-vio.md (then this) to actually validate it, the
+# same "assume nothing, verify live" way every other Dockerfile in this repo
+# was brought up (see README's Known Issues for how many silent-failure
+# gotchas that caught in the sim images — expect this one to have its own).
+#
+# ARM64-native build, run ON the Orange Pi 5 Plus itself — no cross-compile
+# toolchain, matching IMPLEMENTATION_PLAN.md Phase 4's own checklist. Build
+# with: `make build-hw` (see resource/hardware-bringup-gps.md).
+#
+# Mirrors docker/Dockerfile.ros2_autonomy (same DDS agent, same px4_msgs/
+# px4_ros_com, same OpenVINS) with two differences:
+#   - NO ros_gz_bridge / Gazebo layer — there is no simulator on real
+#     hardware, so nothing here needs to speak Gazebo's transport at all.
+#   - ADDS librealsense2 + realsense-ros, built from source (see the
+#     librealsense section below for why apt isn't an option on ARM64, and
+#     why this uses the RSUSB backend rather than the kernel-patch backend).
+# Deliberately still ONE image/container for both the DDS agent and the
+# camera/VIO pipeline — not the two-container split IMPLEMENTATION_PLAN.md's
+# Phase 4 checklist originally sketched (`Dockerfile.hw_sensors` as a
+# separate image). On a single companion computer there's no benefit to
+# splitting them (no separate host to isolate, same DDS domain either way)
+# and a real cost: two containers would need their own cross-container DDS
+# discovery for what's otherwise one simple `ros2 launch` process tree — the
+# exact kind of complexity `sim_bringup`/`ros2-autonomy` avoids by keeping
+# flight logic and transport concerns separate but co-located. Revisit only
+# if a real reason to split them shows up during hardware bring-up.
+# =============================================================================
+
+FROM ros:humble-ros-base
+
+ARG PX4_MSGS_BRANCH=release/1.17
+ARG PX4_ROS_COM_BRANCH=release/1.16
+ARG MICRO_XRCE_DDS_AGENT_VERSION=v3.0.1
+ARG LIBREALSENSE_VERSION=2.58.2
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential \
+        python3-colcon-common-extensions python3-pip \
+        libasio-dev libtinyxml2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Micro-XRCE-DDS-Agent (eProsima) ───────────────────────────────────────
+# Identical to Dockerfile.ros2_autonomy — same agent, same version, only the
+# TRANSPORT differs at run time (serial here, not UDP), and that's a launch-
+# time choice (hw.launch.py starts `MicroXRCEAgent serial --dev ...`), not a
+# build-time one, so this layer needs no changes at all.
+WORKDIR /opt
+RUN git clone --branch ${MICRO_XRCE_DDS_AGENT_VERSION} --depth 1 \
+        https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
+    && cd Micro-XRCE-DDS-Agent \
+    && mkdir build && cd build \
+    && cmake .. \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig /usr/local/lib/
+
+# ── PX4 ROS 2 underlay workspace: px4_msgs + px4_ros_com ──────────────────
+WORKDIR /opt/px4_ros2_ws/src
+RUN git clone --branch ${PX4_MSGS_BRANCH} --depth 1 \
+        https://github.com/PX4/px4_msgs.git \
+    && git clone --branch ${PX4_ROS_COM_BRANCH} --depth 1 \
+        https://github.com/PX4/px4_ros_com.git
+
+WORKDIR /opt/px4_ros2_ws
+RUN . /opt/ros/humble/setup.sh \
+    && colcon build --packages-select px4_msgs px4_ros_com
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+# pymavlink — common_perception's set_localization_source needs it, same as
+# sim (README's Technical Reference: the uXRCE-DDS bridge can't set PX4
+# params in this pinned version, so this is a MAVLink PARAM_SET side-channel
+# regardless of sim or hw).
+RUN pip3 install --no-cache-dir pymavlink
+
+# ── librealsense2, built from source ───────────────────────────────────────
+# Intel's own apt repo (librealsense.intel.com) does NOT publish ARM64
+# packages — x86_64 only, confirmed against their repo's Packages index at
+# authoring time. The documented alternative for ARM/embedded targets
+# (Raspberry Pi, Jetson, and by the same logic here, Orange Pi) is building
+# from source, which is what this does.
+#
+# -DFORCE_RSUSB_BACKEND=ON is deliberate, not a default left in place: the
+# OTHER backend needs a patched Linux UVC kernel driver installed on the
+# HOST (outside any container's control, and a maintenance burden across
+# every kernel update) — RSUSB is librealsense's own supported
+# userspace-only backend (via libusb), needing no host kernel changes at
+# all, at the cost of being newer/less battle-tested than the kernel-patch
+# path. Given this whole stack's own no-upstream-forking, no-host-install
+# policy (see README), RSUSB is the only backend consistent with it.
+WORKDIR /opt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libssl-dev libusb-1.0-0-dev libudev-dev pkg-config \
+        libgtk-3-dev cmake-curses-gui \
+        libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev at \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --branch v${LIBREALSENSE_VERSION} --depth 1 \
+        https://github.com/IntelRealSense/librealsense.git
+
+WORKDIR /opt/librealsense/build
+RUN cmake .. \
+        -DFORCE_RSUSB_BACKEND=ON \
+        -DBUILD_EXAMPLES=false \
+        -DBUILD_GRAPHICAL_EXAMPLES=false \
+        -DBUILD_PYTHON_BINDINGS=false \
+        -DCMAKE_BUILD_TYPE=Release \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig
+
+# librealsense's own udev rules — WITHOUT these, the D435i can enumerate
+# with permissions that block RSUSB's userspace access even with the device
+# node passed into the container (see resource/hardware-bringup-vio.md for
+# the host-side udev step this pairs with; both are required together,
+# neither alone is sufficient).
+RUN cp /opt/librealsense/config/99-realsense-libusb.rules /etc/udev/rules.d/ 2>/dev/null || true
+
+# ── realsense-ros (ROS 2 wrapper) ──────────────────────────────────────────
+# No Humble apt package targets the from-source librealsense2 build above
+# (the apt `ros-humble-realsense2-*` packages pull their OWN librealsense2
+# dependency from Intel's x86_64-only apt repo, which doesn't exist on this
+# architecture) — built from source against the librealsense2 just built,
+# same rosdep-driven pattern Dockerfile.ros2_autonomy already uses for
+# OpenVINS (reads realsense-ros's own package.xml, not a hand-guessed list).
+WORKDIR /opt/realsense_ws/src
+RUN git clone --branch ros2-master --depth 1 \
+        https://github.com/IntelRealSense/realsense-ros.git
+
+WORKDIR /opt/realsense_ws
+RUN apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src -y \
+        --skip-keys librealsense2 \
+    && rm -rf /var/lib/apt/lists/*
+RUN . /opt/ros/humble/setup.sh \
+    && colcon build --packages-select realsense2_camera_msgs realsense2_camera
+
+# ── OpenVINS (Phase 3/4 VIO estimator) ─────────────────────────────────────
+# Identical to Dockerfile.ros2_autonomy.
+WORKDIR /opt/openvins_ws/src
+RUN git clone --depth 1 https://github.com/rpng/open_vins.git
+
+WORKDIR /opt/openvins_ws
+RUN apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src -y \
+    && rm -rf /var/lib/apt/lists/*
+RUN . /opt/ros/humble/setup.sh \
+    && colcon build --packages-select ov_core ov_init ov_msckf ov_eval
+
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
+    && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc \
+    && echo "source /opt/realsense_ws/install/setup.bash" >> /root/.bashrc \
+    && echo "source /opt/openvins_ws/install/setup.bash" >> /root/.bashrc
+
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# No entrypoint script — unlike sim's ros2-autonomy, nothing here needs to
+# auto-start a DDS agent at container boot: hw.launch.py starts
+# `MicroXRCEAgent serial ...` itself as part of the mission's own launch
+# graph (see that file), so its lifecycle is tied to the mission the same
+# way every other node here is, not a separate always-on background process.
+WORKDIR /ros2_ws
+CMD ["tail", "-f", "/dev/null"]

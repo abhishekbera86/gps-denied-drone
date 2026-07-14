@@ -259,7 +259,7 @@ def _set_float_param(conn, name: str, value: float) -> bool:
     return True
 
 
-def set_localization_source(source: str, mavlink_url: str) -> bool:
+def set_localization_source(source: str, mavlink_url: str, lever_arm_frd: dict = None) -> bool:
     if source not in SOURCES:
         _log(f"ERROR: unknown source '{source}' — choose from {list(SOURCES)}")
         return False
@@ -276,7 +276,14 @@ def set_localization_source(source: str, mavlink_url: str) -> bool:
         ok = _set_param(conn, name, value) and ok
 
     if source == 'vision':
-        for name, value in VISION_LEVER_ARM_FRD.items():
+        # Airframe-specific physical geometry — NOT the same value on every
+        # rig. Defaults to the sim d435i model's own (co-located,
+        # near-zero) offset; callers with a different physical mount (e.g.
+        # hw_bringup's real D435i on a real airframe — see
+        # resource/hardware-bringup-vio.md) must pass the real measured
+        # values here rather than relying on the sim default silently
+        # applying to different hardware.
+        for name, value in (lever_arm_frd or VISION_LEVER_ARM_FRD).items():
             ok = _set_float_param(conn, name, value) and ok
         for name, value in VISION_NOISE_VALUES.items():
             ok = _set_float_param(conn, name, value) and ok
@@ -296,9 +303,31 @@ def main(args=None) -> None:
     parser.add_argument(
         '--mavlink-url', required=True,
         help='pymavlink connection string, e.g. udpin:0.0.0.0:14540')
+    parser.add_argument(
+        '--ev-pos-x', type=float, default=None,
+        help=('Vision sensor lever arm X (FRD body frame, meters) — overrides the '
+              'sim d435i default. Only meaningful with --source vision. All three '
+              '--ev-pos-* must be given together or not at all.'))
+    parser.add_argument(
+        '--ev-pos-y', type=float, default=None,
+        help='Vision sensor lever arm Y (FRD body frame, meters) — see --ev-pos-x.')
+    parser.add_argument(
+        '--ev-pos-z', type=float, default=None,
+        help='Vision sensor lever arm Z (FRD body frame, meters) — see --ev-pos-x.')
     parsed = parser.parse_args(args)
 
-    success = set_localization_source(parsed.source, parsed.mavlink_url)
+    overrides = [parsed.ev_pos_x, parsed.ev_pos_y, parsed.ev_pos_z]
+    if any(v is not None for v in overrides) and not all(v is not None for v in overrides):
+        parser.error('--ev-pos-x/--ev-pos-y/--ev-pos-z must be given together, not partially')
+    lever_arm_frd = None
+    if all(v is not None for v in overrides):
+        lever_arm_frd = {
+            'EKF2_EV_POS_X': parsed.ev_pos_x,
+            'EKF2_EV_POS_Y': parsed.ev_pos_y,
+            'EKF2_EV_POS_Z': parsed.ev_pos_z,
+        }
+
+    success = set_localization_source(parsed.source, parsed.mavlink_url, lever_arm_frd)
     sys.exit(0 if success else 1)
 
 

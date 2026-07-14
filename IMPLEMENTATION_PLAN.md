@@ -199,14 +199,49 @@ Two build-time bugs found and fixed here (see README "Known Issues" for detail):
 - [x] Verify: `estimator_status_flags` confirms `cs_ev_pos`/`cs_ev_vel: true`,
       `cs_gnss_pos`/`cs_gnss_vel: false` when `LOCALIZATION=vision`
 
-### Phase 4 — Real hardware (Orange Pi 5 Plus + Pixhawk 6 + D435i)
-- [ ] `docker/Dockerfile.hw_sensors` — ARM64, librealsense v2.58.2, `realsense-ros`
-- [ ] `hw_bringup`: uXRCE-DDS agent over serial to Pixhawk 6, RealSense launch
-- [ ] Flash PX4 v1.17.0 to the physical Pixhawk 6
-- [ ] Upload matching EKF2 GPS-denied params
-- [ ] Build ARM64 images on the Orange Pi 5 Plus itself (`make build-hw`)
-- [ ] Tethered hover test (props off first)
-- [ ] Run the identical Phase 2/3 mission code, unmodified, on real hardware
+### Phase 4 — Real hardware (Orange Pi 5 Plus + Pixhawk 6C + D435i)
+Infrastructure authored 2026-07-14 — everything below marked [x] exists in
+the repo, but **nothing has run on real hardware yet**, so treat every
+[x] as "written and reviewed," not "verified." Follow
+resource/hardware-bringup-gps.md and resource/hardware-bringup-vio.md,
+which supersede this checklist as the actual step-by-step path.
+- [x] `docker/Dockerfile.hw_autonomy` — ARM64, librealsense v2.58.2 (from
+      source, RSUSB backend — no ARM64 apt package exists), `realsense-ros`,
+      plus the same DDS agent/px4_msgs/px4_ros_com/OpenVINS as sim's image,
+      minus the Gazebo-only ros_gz_bridge layer. One combined image, not
+      the originally-sketched separate `Dockerfile.hw_sensors` — see that
+      Dockerfile's own header for why (no benefit to splitting DDS-agent
+      and camera/VIO across two containers on one companion computer).
+- [x] `hw_bringup`: uXRCE-DDS agent over serial to the Pixhawk 6C
+      (`hw.launch.py`, pre-existing), RealSense + OpenVINS now actually
+      wired in (`common_perception/launch/hw_vio.launch.py`, new) when
+      `localization_source:=vision` — no `vio_backend` choice on real
+      hardware, unlike sim (no fake-VIO loopback stand-in exists here).
+- [x] `docker-compose.yml` `hw` profile (`hw-autonomy` service, privileged +
+      USB/serial device passthrough) and `Makefile` hw targets
+      (`build-hw`/`build-ws-hw`/`hw-flight-test`/`hw-mission`/`shell-hw`/
+      `stop-hw`) — not in the original checklist below, added because the
+      checklist items above need somewhere to actually run.
+- [x] Real-hardware OpenVINS calibration file templates
+      (`config/openvins/{estimator_config,kalibr_imucam_chain,
+      kalibr_imu_chain}_hw.yaml`) — explicit placeholders, not real
+      calibration output; filling them in via a real Kalibr calibration is
+      resource/hardware-bringup-vio.md's central task.
+- [x] `set_localization_source.py` gained `--ev-pos-x/y/z` CLI overrides —
+      the sim d435i's lever arm was previously hardcoded module-level and
+      had no way to express a different physical mount.
+- [ ] Flash PX4 v1.17.0 to the physical Pixhawk 6C — resource/
+      hardware-bringup-gps.md §2, not yet done (no hardware).
+- [ ] Upload matching EKF2 GPS-denied params — mechanism already exists
+      (`set_localization_source`, same code as sim) and needs no new work;
+      "not yet done" here means not yet exercised against real firmware.
+- [ ] Build ARM64 images on the Orange Pi 5 Plus itself (`make build-hw`) —
+      Dockerfile exists (see above), never actually built on ARM64 hardware.
+- [ ] Tethered hover test (props off first) — resource/
+      hardware-bringup-gps.md §9-10.
+- [ ] Run the identical Phase 2/3 mission code, unmodified, on real
+      hardware — resource/hardware-bringup-gps.md §12 (GPS),
+      resource/hardware-bringup-vio.md §8 (VIO).
 
 ### Phase 5 — SLAM + Nav2 (deferred, not designed in detail yet)
 - [ ] Evaluate RTAB-Map as the mapping-capable successor/complement to

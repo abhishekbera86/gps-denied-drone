@@ -2,19 +2,25 @@
 # docker-compose.yml — GPS-Denied Autonomous Drone Stack (v3 — PX4-native ROS 2)
 # =============================================================================
 #
-# ARCHITECTURE — Phase 0/1 (sim only; hw profile added in Phase 4):
+# ARCHITECTURE:
 #
-#   px4-sim         PX4 v1.17.0 SITL + Gazebo Harmonic (headless, x500_depth)
-#   ros2-autonomy   ROS 2 Humble + px4_msgs/px4_ros_com + common_* packages
-#                   Runs the Micro-XRCE-DDS-Agent bridging PX4 <-> ROS 2 topics.
+#   sim profile (Phase 0-3, x86_64 dev host):
+#     px4-sim         PX4 v1.17.0 SITL + Gazebo Harmonic (headless, x500_depth)
+#     ros2-autonomy   ROS 2 Humble + px4_msgs/px4_ros_com + common_* packages
+#                     Runs the Micro-XRCE-DDS-Agent bridging PX4 <-> ROS 2 topics.
 #
-# Both containers use host networking so the DDS agent (udp 127.0.0.1:8888,
-# matching PX4's default uxrce_dds_client target) is reachable across
-# containers with zero explicit port mapping.
+#   hw profile (Phase 4, ARM64 Orange Pi 5 Plus — UNTESTED, see
+#   resource/hardware-bringup-gps.md before using this):
+#     hw-autonomy     ROS 2 Humble + px4_msgs/px4_ros_com + realsense-ros +
+#                     OpenVINS + common_* packages. No px4-sim equivalent —
+#                     PX4 runs on the real Pixhawk 6C, not in a container.
+#
+# All containers use host networking so the DDS agent (udp 127.0.0.1:8888 in
+# sim, or the serial link in hw) is reachable with zero explicit port mapping.
 #
 # Usage:
-#   make build   (first time only)
-#   make sim     (starts px4-sim + ros2-autonomy)
+#   make build      (first time only, sim)      make build-hw  (hw, run ON the Orange Pi)
+#   make sim        (starts px4-sim + ros2-autonomy)
 #   make stop
 # =============================================================================
 
@@ -22,6 +28,10 @@ volumes:
   colcon_build_cache:
     name: quad_colcon_build_cache
     # Persists colcon build output for common_* packages across restarts.
+  hw_colcon_build_cache:
+    name: quad_hw_colcon_build_cache
+    # Same as colcon_build_cache, kept separate: hw-autonomy's workspace is
+    # built against ARM64 + realsense-ros, not interchangeable with sim's.
 
 services:
 
@@ -111,3 +121,39 @@ services:
       - px4-sim
     command: tail -f /dev/null
     profiles: [sim]
+
+  # ── Real hardware: Orange Pi 5 Plus companion computer (Phase 4) ──────────
+  # UNTESTED — no hardware has run this yet. See resource/hardware-bringup-
+  # gps.md before using this profile at all. Runs ON the Orange Pi itself
+  # (ARM64-native build/run, no cross-compile) -- there is no px4-sim
+  # equivalent here, since PX4 runs on the physical Pixhawk 6C, not in a
+  # container.
+  hw-autonomy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.hw_autonomy
+      args:
+        PX4_MSGS_BRANCH: "${PX4_MSGS_BRANCH:-release/1.17}"
+        PX4_ROS_COM_BRANCH: "${PX4_ROS_COM_BRANCH:-release/1.16}"
+        LIBREALSENSE_VERSION: "${LIBREALSENSE_VERSION:-2.58.2}"
+    image: quad/hw-autonomy:humble
+    container_name: hw-autonomy
+    network_mode: host
+    privileged: true
+    # privileged (not a narrower --device list) because the D435i's exact
+    # /dev/bus/usb/<bus>/<device> node changes across replugs/reboots --
+    # librealsense's RSUSB backend needs the ability to enumerate the USB
+    # topology itself, not just open one fixed pre-guessed node. Narrow this
+    # once real hardware confirms a stable device path, if that turns out to
+    # matter (see resource/hardware-bringup-vio.md).
+    environment:
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      DRONE_NAMESPACE: "${DRONE_NAMESPACE:-drone1}"
+    devices:
+      - "${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}:${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}"
+    volumes:
+      - ./ros2_ws:/ros2_ws:rw
+      - hw_colcon_build_cache:/ros2_ws_build
+      - /dev/bus/usb:/dev/bus/usb
+    command: tail -f /dev/null
+    profiles: [hw]

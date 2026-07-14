@@ -16,7 +16,7 @@
 include .env
 export
 
-.PHONY: help build build-ws sim sim-gui flight-test mission stop gz-resync shell shell-px4 logs ps clean clean-all
+.PHONY: help build build-ws sim sim-gui flight-test mission stop gz-resync shell shell-px4 logs ps clean clean-all build-hw build-ws-hw hw-flight-test hw-mission shell-hw stop-hw
 
 # Mission flown by `make mission` — currently just square (see common_missions).
 MISSION ?= square
@@ -33,6 +33,32 @@ VIO_BACKEND ?= loopback
 # vio_test (colored props, needed for VIO_BACKEND=openvins to have anything to
 # track). See resource/phase3-gps-denied-localization-source.md.
 PX4_GZ_WORLD ?= empty
+
+# Default hw workflow: EKF2_GPS_CTRL/EKF2_EV_CTRL already set once via
+# QGroundControl (resource/hardware-bringup-gps.md), single USB connection
+# to the Pixhawk, nothing here touches PX4 params. Set to `true` to instead
+# run the automated MAVLink-based source switch every launch (sim-
+# equivalent behavior) — needs a SECOND physical link wired, see the guide.
+USE_MAVLINK_SWITCH ?= false
+
+# pymavlink connection string for hw-flight-test/hw-mission's localization-
+# source switch — only used when USE_MAVLINK_SWITCH=true. This default is
+# SITL-shaped (matches sim) and is WRONG for real hardware. MUST be
+# overridden, e.g. USE_MAVLINK_SWITCH=true
+# MAVLINK_URL=/dev/ttyTHEIR_MAVLINK_PORT make hw-flight-test — see
+# resource/hardware-bringup-gps.md for how to determine the right value for
+# your wiring (this is a SEPARATE serial link from PIXHAWK_SERIAL_PORT
+# below, which carries uXRCE-DDS, not MAVLink).
+MAVLINK_URL ?= udpin:0.0.0.0:14540
+
+# Vision sensor (D435i) lever arm relative to the Pixhawk's own IMU, FRD
+# body frame, meters — airframe-specific physical geometry, NOT a software
+# constant. 0.0/0.0/0.0 is a deliberately-obvious "not yet measured"
+# sentinel, not a real default — see resource/hardware-bringup-vio.md for
+# how to measure this on your actual frame before any vision-mode flight.
+EV_POS_X ?= 0.0
+EV_POS_Y ?= 0.0
+EV_POS_Z ?= 0.0
 
 help:
 	@echo ""
@@ -59,6 +85,14 @@ help:
 	@echo "  ║    make logs       Tail all container logs    ║"
 	@echo "  ║    make ps         Show container status      ║"
 	@echo "  ║    make stop       Stop everything            ║"
+	@echo "  ╠══════════════════════════════════════════════╣"
+	@echo "  ║  HARDWARE (Phase 4 — UNTESTED, see            ║"
+	@echo "  ║  resource/hardware-bringup-gps.md first)      ║"
+	@echo "  ║    make build-hw     Build hw-autonomy (ARM64)║"
+	@echo "  ║    make build-ws-hw  Build the ROS 2 workspace║"
+	@echo "  ║    make hw-flight-test / hw-mission           ║"
+	@echo "  ║    make shell-hw   Shell into hw-autonomy     ║"
+	@echo "  ║    make stop-hw    Stop hw-autonomy           ║"
 	@echo "  ╚══════════════════════════════════════════════╝"
 	@echo ""
 
@@ -174,6 +208,65 @@ mission:
 stop:
 	@docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile sim down --remove-orphans
 	@echo "  ✓ All containers stopped."
+
+# =============================================================================
+# HARDWARE (Phase 4 — Orange Pi 5 Plus + Pixhawk 6C — UNTESTED)
+# =============================================================================
+# Run these ON the Orange Pi itself (ARM64-native build, no cross-compile).
+# See resource/hardware-bringup-gps.md before using any of these — this is
+# authored-but-unverified infrastructure, not confirmed working end to end.
+build-hw:
+	@echo "==> Building hw-autonomy (ARM64 — expect this to take a while on"
+	@echo "    Orange Pi-class hardware, especially the librealsense2 from-source build)..."
+	DOCKER_BUILDKIT=1 docker compose --profile hw build
+
+build-ws-hw:
+	@echo "==> Building the ROS 2 workspace inside hw-autonomy..."
+	@docker exec -it hw-autonomy bash -c "\
+		source /opt/ros/humble/setup.bash && \
+		source /opt/px4_ros2_ws/install/setup.bash && \
+		mkdir -p /ros2_ws_build && cd /ros2_ws_build && \
+		colcon build --symlink-install --base-paths /ros2_ws/src \
+			--build-base /ros2_ws_build/build \
+			--install-base /ros2_ws_build/install"
+	@echo "  ✓ Workspace built."
+
+hw-flight-test:
+	@docker exec -it hw-autonomy bash -c "\
+		test -f /ros2_ws_build/install/setup.bash || { echo 'Workspace not built yet — run: make build-ws-hw'; exit 1; }; \
+		echo '==> Running the offboard flight test (via hw_bringup)...'; \
+		source /opt/ros/humble/setup.bash && \
+		source /opt/px4_ros2_ws/install/setup.bash && \
+		source /opt/realsense_ws/install/setup.bash && \
+		source /opt/openvins_ws/install/setup.bash && \
+		source /ros2_ws_build/install/setup.bash && \
+		ros2 launch hw_bringup hw.launch.py action:=hover \
+			serial_device:=$(PIXHAWK_SERIAL_PORT) baud:=$(PIXHAWK_BAUD_RATE) \
+			localization_source:=$(LOCALIZATION) use_mavlink_switch:=$(USE_MAVLINK_SWITCH) \
+			mavlink_url:=$(MAVLINK_URL) \
+			ev_pos_x:=$(EV_POS_X) ev_pos_y:=$(EV_POS_Y) ev_pos_z:=$(EV_POS_Z)"
+
+hw-mission:
+	@docker exec -it hw-autonomy bash -c "\
+		test -f /ros2_ws_build/install/setup.bash || { echo 'Workspace not built yet — run: make build-ws-hw'; exit 1; }; \
+		echo \"==> Flying the '$(MISSION)' mission, localization=$(LOCALIZATION) (via hw_bringup)...\"; \
+		source /opt/ros/humble/setup.bash && \
+		source /opt/px4_ros2_ws/install/setup.bash && \
+		source /opt/realsense_ws/install/setup.bash && \
+		source /opt/openvins_ws/install/setup.bash && \
+		source /ros2_ws_build/install/setup.bash && \
+		ros2 launch hw_bringup hw.launch.py action:=mission mission:=$(MISSION) \
+			serial_device:=$(PIXHAWK_SERIAL_PORT) baud:=$(PIXHAWK_BAUD_RATE) \
+			localization_source:=$(LOCALIZATION) use_mavlink_switch:=$(USE_MAVLINK_SWITCH) \
+			mavlink_url:=$(MAVLINK_URL) \
+			ev_pos_x:=$(EV_POS_X) ev_pos_y:=$(EV_POS_Y) ev_pos_z:=$(EV_POS_Z)"
+
+shell-hw:
+	docker exec -it hw-autonomy bash
+
+stop-hw:
+	@docker compose --profile hw down --remove-orphans
+	@echo "  ✓ hw-autonomy stopped."
 
 # =============================================================================
 # DEBUGGING

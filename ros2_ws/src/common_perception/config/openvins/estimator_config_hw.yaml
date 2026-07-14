@@ -1,0 +1,138 @@
+%YAML:1.0 # need to specify the file type at the top!
+#
+# estimator_config_hw.yaml — OpenVINS MSCKF config for the REAL D435i on the
+# physical airframe (Phase 4). Same structure as ../estimator_config.yaml
+# (the sim config); differences from it are called out explicitly below.
+# See resource/hardware-bringup-vio.md for the calibration procedure this
+# file's referenced kalibr_*_hw.yaml files depend on.
+
+verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
+
+use_fej: true
+integration: "rk4"
+use_stereo: false # mono, matching the sim config -- the D435i's second
+# ("left") IR imager could feed a real stereo VIO pipeline later (see
+# README's Roadmap, "stereo IR pair" as a follow-on to this), but that is a
+# deliberately separate piece of future work, not part of this first
+# real-hardware bring-up.
+max_cameras: 1
+
+# DIFFERENCE FROM SIM: calib_cam_extrinsics starts TRUE here, not the sim
+# config's frozen FALSE. Sim could freeze this because its seed value was
+# independently re-derived from known SDF geometry AND confirmed against a
+# real flight log (resource/phase3-gps-denied-localization-source.md,
+# findings 6-7) before freezing it. kalibr_imucam_chain_hw.yaml's seed is a
+# raw Kalibr calibration output with no such independent cross-check yet --
+# freezing an unverified seed risks repeating the EXACT bug sim already hit
+# once (a wrong-but-plausible-looking extrinsic flying fine in smooth
+# cruise, then diverging under AUTO_LAND's more aggressive dynamics).
+# Leave this TRUE through your first several test flights so OpenVINS can
+# correct a slightly-off Kalibr seed live; only set to FALSE once flight
+# logs across multiple flights show it converging to and holding the SAME
+# value every time (the exact evidence sim's own freeze decision was based
+# on) -- see resource/hardware-bringup-vio.md.
+calib_cam_extrinsics: true
+calib_cam_intrinsics: true
+calib_cam_timeoffset: true
+calib_imu_intrinsics: false
+calib_imu_g_sensitivity: false
+
+max_clones: 11
+max_slam: 50
+max_slam_in_update: 25
+max_msckf_in_update: 40
+dt_slam_delay: 1
+
+gravity_mag: 9.81
+
+feat_rep_msckf: "GLOBAL_3D"
+feat_rep_slam: "ANCHORED_MSCKF_INVERSE_DEPTH"
+feat_rep_aruco: "ANCHORED_MSCKF_INVERSE_DEPTH"
+
+# Same reasoning as the sim config for both flags below -- see that file's
+# own header for the full incident history (a real, confirmed pre-arm
+# init failure and a real, confirmed post-landing-drift regression this
+# project already hit once; both apply identically on real hardware, since
+# neither is about anything sim-specific).
+try_zupt: true
+zupt_chi2_multipler: 0
+zupt_max_velocity: 0.1
+zupt_noise_multiplier: 10
+zupt_max_disparity: 0.5
+zupt_only_at_beginning: true
+
+# ==================================================================
+# ==================================================================
+
+init_window_time: 2.0
+init_imu_thresh: 1.5
+init_max_disparity: 10.0
+init_max_features: 50
+
+init_dyn_use: false
+init_dyn_mle_opt_calib: false
+init_dyn_mle_max_iter: 50
+init_dyn_mle_max_time: 0.05
+init_dyn_mle_max_threads: 6
+init_dyn_num_pose: 6
+init_dyn_min_deg: 10.0
+
+init_dyn_inflation_ori: 10
+init_dyn_inflation_vel: 100
+init_dyn_inflation_bg: 10
+init_dyn_inflation_ba: 100
+init_dyn_min_rec_cond: 1e-12
+
+init_dyn_bias_g: [ 0.0, 0.0, 0.0 ]
+init_dyn_bias_a: [ 0.0, 0.0, 0.0 ]
+
+# ==================================================================
+# ==================================================================
+
+record_timing_information: false
+record_timing_filepath: "/tmp/traj_timing.txt"
+
+save_total_state: false
+filepath_est: "/tmp/ov_estimate.txt"
+filepath_std: "/tmp/ov_estimate_std.txt"
+filepath_gt: "/tmp/ov_groundtruth.txt"
+
+# ==================================================================
+# ==================================================================
+
+use_klt: true
+num_pts: 200
+fast_threshold: 30
+grid_x: 5
+grid_y: 5
+min_px_dist: 15
+knn_ratio: 0.70
+track_frequency: 30.0 # a CEILING, not an assumed rate -- see the sim
+# config's own comment. Real D435i color stream commonly runs 30 or 60Hz
+# depending on the resolution/profile you configure in hw_vio.launch.py;
+# confirm the actual delivered rate with `ros2 topic hz
+# /camera/camera/color/image_raw` rather than assuming the requested rate
+# is the achieved one, the same lesson sim's own iGPU rendering bottleneck
+# already taught (README's Known Issues).
+downsample_cameras: false
+num_opencv_threads: 4
+histogram_method: "HISTOGRAM"
+
+use_aruco: false
+num_aruco: 1024
+downsize_aruco: true
+
+# ==================================================================
+# ==================================================================
+
+up_msckf_sigma_px: 1
+up_msckf_chi2_multipler: 1
+up_slam_sigma_px: 1
+up_slam_chi2_multipler: 1
+up_aruco_sigma_px: 1
+up_aruco_chi2_multipler: 1
+
+use_mask: false
+
+relative_config_imu: "kalibr_imu_chain_hw.yaml"
+relative_config_imucam: "kalibr_imucam_chain_hw.yaml"

@@ -1,0 +1,45 @@
+%YAML:1.0
+#
+# kalibr_imucam_chain_hw.yaml — camera intrinsics/extrinsics for the REAL
+# D435i mounted on the physical airframe (Phase 4).
+#
+# TEMPLATE — every value below is a PLACEHOLDER, not measured or derived
+# from real hardware. Do NOT fly on this file as shipped. Follow
+# resource/hardware-bringup-vio.md's calibration procedure (Kalibr
+# camera-IMU calibration against a real target) to replace every value
+# marked FILL IN below, the same way kalibr_imucam_chain.yaml's sim values
+# were DERIVED (not guessed) from vio_test.sdf's actual declared geometry —
+# see that file's own header for why a wrong value here isn't a tuning
+# nuisance, it's a repeat of a real, confirmed in-flight divergence
+# (resource/phase3-gps-denied-localization-source.md, finding 6/7).
+#
+# T_cam_imu (rotation + translation, camera <- IMU): UNLIKE the sim model
+# (which co-located the camera and its own IMU, making translation exactly
+# zero), the D435i's own onboard IMU is NOT at the same physical point as
+# its color sensor — check the D435i's own mechanical drawing for the
+# nominal offset, then let Kalibr's calibration refine it; do not assume
+# translation is zero here the way sim could.
+#
+# intrinsics/resolution: FILL IN from realsense-ros's own
+# /camera/camera/color/camera_info topic (`ros2 topic echo
+# /camera/camera/color/camera_info --once`) at the SAME resolution/frame
+# rate you configure in hw_vio.launch.py and calibrate with — changing
+# resolution after calibrating invalidates these numbers (this project
+# already hit exactly this class of mistake once in sim: model.sdf's
+# resolution and this file's intrinsics silently went out of sync when one
+# was changed without the other — see README's Known Issues for the
+# 640x360 resolution-change entry).
+cam0:
+  T_cam_imu:
+    - [1.0, 0.0, 0.0, 0.0]   # FILL IN — Kalibr calibration output
+    - [0.0, 1.0, 0.0, 0.0]   # FILL IN — Kalibr calibration output
+    - [0.0, 0.0, 1.0, 0.0]   # FILL IN — Kalibr calibration output
+    - [0.0, 0.0, 0.0, 1.0]
+  cam_overlaps: []
+  camera_model: pinhole
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]   # FILL IN — real D435i has real lens distortion, unlike Gazebo's ideal pinhole model
+  distortion_model: radtan
+  intrinsics: [0.0, 0.0, 0.0, 0.0]          # FILL IN — fx, fy, cx, cy from /camera/camera/color/camera_info
+  resolution: [0, 0]                        # FILL IN — must match the resolution actually calibrated and flown
+  rostopic: /camera/camera/color/image_raw
+  timeshift_cam_imu: 0.0                    # FILL IN — Kalibr calibration output (camera-IMU hardware time offset, real and nonzero on real hardware unlike sim's perfectly-synced clock)

@@ -1996,6 +1996,107 @@ Architecture's link text), not lost content.
 Not pushed yet — commit only, per standing workflow preference
 ([[drone-project-workflow-prefs]]); user will push.
 
+## Phase 4, part 1 (2026-07-14, later same day) — user shared real airframe details (custom quad, Pixhawk 6C, Orange Pi 5 Plus/Ubuntu 22, D435i, external GPS) and asked for a step-by-step bring-up guide; built the missing infra so the guide would actually be followable, not just aspirational
+
+User's ask: analyze the repo's real-hardware readiness, advise on camera
+calibration, and produce a GPS-phase/VIO-phase step-by-step guide under
+`resource/`, linked from the README.
+
+**Investigation first**: `hw_bringup` (launch file + `hw_params.yaml`)
+already existed as a well-documented stub, but `docker-compose.yml` had
+NO `hw` profile, no `Dockerfile.hw_*` existed at all, and `Makefile` had
+zero hw targets — `IMPLEMENTATION_PLAN.md`'s own Phase 4 checklist
+confirmed all of this was still unchecked. A guide referencing
+`make build-hw` or similar would have been fiction. Also found:
+`hw.launch.py`'s VIO slot was a literal commented-out placeholder (never
+wired in), and `set_localization_source.py`'s vision-mode lever arm
+(`VISION_LEVER_ARM_FRD`) was hardcoded to the SIM d435i model's
+co-located (near-zero) offset with no override — wrong by construction
+for a different physical airframe, and would have silently applied the
+sim's geometry to real hardware if not caught.
+
+**Decision: build the infrastructure, not just document around the
+gaps.** Justified by existing project precedent — `hw_bringup` itself was
+already an accepted pattern of "ship well-reasoned but untested hardware
+scaffolding, clearly marked, to be validated when hardware arrives"; this
+extends that same pattern rather than inventing a new one. Built:
+- `docker/Dockerfile.hw_autonomy` — ARM64, mirrors
+  `Dockerfile.ros2_autonomy` (same DDS agent/px4_msgs/px4_ros_com/
+  OpenVINS) minus the Gazebo-only `ros_gz_bridge` layer, plus
+  `librealsense2` built from source with `-DFORCE_RSUSB_BACKEND=ON`
+  (Intel's apt repo has no ARM64 packages; RSUSB avoids needing a
+  patched host kernel UVC driver, consistent with this project's own
+  no-host-install policy) and `realsense-ros` built against it. ONE
+  combined image, not the two-container split
+  (`Dockerfile.hw_sensors` + a separate DDS-agent image) the original
+  `IMPLEMENTATION_PLAN.md` checklist had sketched — no benefit splitting
+  them on a single companion computer, real cost in cross-container DDS
+  discovery complexity for no reason. Deviation documented in the
+  Dockerfile's own header, not silently substituted.
+- `docker-compose.yml`'s new `hw` profile (`hw-autonomy` service) —
+  `privileged: true` + `/dev/bus/usb` mount (RSUSB needs to enumerate
+  USB topology itself, not a fixed pre-guessed node) + the Pixhawk
+  serial device. Separate `hw_colcon_build_cache` volume (ARM64 build
+  output isn't interchangeable with sim's).
+- `Makefile` hw targets mirroring the sim ones exactly
+  (`build-hw`/`build-ws-hw`/`hw-flight-test`/`hw-mission`/`shell-hw`/
+  `stop-hw`), plus new `MAVLINK_URL`/`EV_POS_X/Y/Z` override variables
+  (see below) — all with loud "UNTESTED, see the guide first" comments,
+  not silently presented as equivalent-to-sim.
+- `hw.launch.py`: replaced the placeholder comment with an actual
+  conditional include of a new `common_perception/launch/hw_vio.launch.py`
+  when `localization_source:=vision` — realsense-ros + OpenVINS +
+  `openvins_odometry_bridge` (that last node reused completely unmodified;
+  confirmed by reading it that it has zero sim-specific logic) + a
+  `vio_output_check` guard reusing the exact same fail-loud design as
+  sim's own (issue 35/36) but watching `/ov_msckf/odomimu` from the
+  start this time, not repeating the input-vs-output mistake that guard's
+  own history already went through once.
+- Three new OpenVINS calibration files
+  (`estimator_config_hw.yaml`/`kalibr_imucam_chain_hw.yaml`/
+  `kalibr_imu_chain_hw.yaml`) — explicit templates with `FILL IN` markers,
+  not fabricated-plausible-looking numbers. One exception: IMU noise
+  density values ARE filled in, but sourced from a cited published paper
+  (Sier et al., arxiv 2504.14376) on the D435i's BMI055, found via a live
+  web search specifically because seeding an unverified specific decimal
+  into a safety-relevant config uncited felt like the wrong call — cited
+  in the file itself so the user can verify the source, not just trust
+  the number. `calib_cam_extrinsics: true` (NOT sim's frozen `false`) —
+  sim could only freeze its value after independently re-deriving AND
+  flight-confirming it (see part with issues 22/23); a raw Kalibr output
+  has no such cross-check yet, so freezing it here would risk repeating
+  the exact bug that froze-too-early already caused once in sim.
+- `set_localization_source.py`: added `--ev-pos-x/y/z` CLI overrides
+  (optional, default `None` → sim behavior unchanged), used by
+  `hw.launch.py`'s new `ev_pos_x/y/z` launch arguments (deliberately
+  `0.0` sentinel defaults, not the sim value — an unmeasured real mount
+  should fail obviously wrong, not silently inherit a different
+  airframe's geometry).
+
+**Wrote the two guides** (`resource/hardware-bringup-gps.md`,
+`resource/hardware-bringup-vio.md`) as the actual step-by-step deliverable
+— GPS phase deliberately isolates `hw_bringup`'s own unverified risk from
+VIO's separately-unverified risk (mirrors this project's own standing
+principle of isolating unknowns one at a time, e.g. Milestone A's
+loopback stand-in proving the switch mechanism before real VIO). VIO
+guide includes a real Kalibr camera-IMU calibration procedure (sim never
+needed this — its extrinsics were analytically derivable from known SDF
+geometry, which doesn't exist for a hand-built real mount) and explicit
+warnings against repeating the tilted-camera-rig's still-unresolved 84m
+divergence (`dev/camera-tilt` branch, referenced but never merged).
+
+**Verified what could be verified without real hardware**: all three new
+YAML files parse; `docker compose config` validates the new `hw` profile;
+all touched/new Python and launch files pass `ast.parse`; a link/anchor
+validator (same one built for the README split) confirms every link
+across all 7 doc files (README + 6 resource docs) resolves. What could
+NOT be verified: anything requiring actual hardware — no ARM64 build, no
+real USB/serial enumeration, no real flight. This is explicitly flagged
+throughout both guides and in every new file's own header, not glossed
+over.
+
+Not committed yet as of this entry — pending user review.
+
 ## Explicitly not done yet (don't assume otherwise)
 - **Part 14 above (2026-07-10): the tilted rig is NOT flight-ready — one
   real flight, one 84m divergence crash (open). Do NOT hand the user the
@@ -2026,12 +2127,18 @@ Not pushed yet — commit only, per standing workflow preference
   `PX4_GZ_WORLD=vio_test` SITL via `gz topic -l`) — now bridging our own
   `d435i` model's sensors (color/depth/imu), not the stock `OakD-Lite`'s.
 - No Nav2/SLAM (Phase 5).
-- No real hardware bring-up has been RUN — `hw_bringup` exists as an
-  untested stub (launch file verified to start and wait correctly, nothing
-  more). No hardware `docker-compose` profile/Dockerfile for the Orange Pi
-  companion computer or realsense-ros yet — Phase 4 territory. Its
-  `mavlink_url` default is SITL-shaped and definitely wrong for real
-  hardware — Phase 4 must set a real MAVLink telemetry endpoint.
+- No real hardware bring-up has been RUN — as of Phase 4 part 1
+  (2026-07-14), `hw_bringup`/`hw-autonomy`/`hw_vio.launch.py` all exist
+  and are internally consistent (Python/launch files parse, YAML parses,
+  `docker compose config` validates, link validator confirms the two new
+  guides), but NONE of it has executed on ARM64 hardware or against a
+  real Pixhawk — everything is "written and reviewed," not "verified."
+  See resource/hardware-bringup-gps.md / hardware-bringup-vio.md for the
+  actual step-by-step path and resource/known-issues.md for where to log
+  what breaks first. `mavlink_url`'s default is still SITL-shaped by
+  design (a required-looking placeholder, not a real value) — the
+  Makefile's `MAVLINK_URL` variable and the GPS guide's §3 cover setting
+  it correctly per-deployment.
 - No YAML params file for `hw_bringup`'s values has been tuned against real
   flight — `hw_params.yaml` is untested guesses (smaller/conservative), not
   validated numbers.
