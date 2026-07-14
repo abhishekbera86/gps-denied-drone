@@ -79,10 +79,6 @@ tmp/
 temp/
 scratch/
 
-# ── Local-only planning/tracking docs ─────────────────────────
-# Internal dev-tracking working documents — not meant to be pushed.
-IMPLEMENTATION_PLAN.md
-DEVELOPMENT_STATUS.md
 
 # ── Claude Code local settings ────────────────────────────────
 # Per-machine permission allowlists, not part of the public recipe.

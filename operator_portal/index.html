@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ground Control Portal — GPS-Denied Drone Stack</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Outfit & Space Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Outfit', 'sans-serif'],
+            mono: ['Space Mono', 'monospace'],
+          },
+          colors: {
+            space: {
+              950: '#060813',
+              900: '#0B0F19',
+              800: '#151C2C',
+              700: '#1F293D',
+            },
+            cyan: {
+              glow: '#00F0FF',
+            },
+            emerald: {
+              glow: '#00FF66',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #060813;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(20, 30, 80, 0.3) 0, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(10, 40, 60, 0.2) 0, transparent 50%);
+    }
+    .glass {
+      background: rgba(21, 28, 44, 0.6);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .glow-cyan:hover {
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+    }
+    .glow-emerald {
+      box-shadow: 0 0 20px rgba(0, 255, 102, 0.3);
+    }
+    /* Simple Pulse Animation */
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.95); }
+    }
+    .pulse-indicator {
+      animation: pulse-soft 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="text-slate-100 font-sans min-h-screen flex flex-col antialiased">
+
+  <!-- NAVIGATION BAR -->
+  <header class="glass sticky top-0 z-50 px-6 py-4 flex items-center justify-between border-b border-white/5">
+    <div class="flex items-center space-x-3">
+      <div class="h-9 w-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+        <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-wider uppercase bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">GCP Console</h1>
+        <p class="text-[10px] text-cyan-400/80 font-mono tracking-widest uppercase">Operator Interface v1.0</p>
+      </div>
+    </div>
+
+    <!-- Telemetry Status Bar -->
+    <div class="flex items-center space-x-6 text-sm">
+      <div class="flex items-center space-x-2">
+        <span class="h-2 w-2 rounded-full bg-emerald-500 pulse-indicator"></span>
+        <span class="text-slate-300 font-medium">SITL Status:</span>
+        <span class="text-emerald-400 font-mono" id="connection-status">CONNECTED</span>
+      </div>
+      <div class="h-4 w-px bg-white/10"></div>
+      <div class="flex items-center space-x-2">
+        <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+        </svg>
+        <span class="text-slate-400 font-mono text-xs">CPU: <span id="cpu-load">4.2%</span></span>
+      </div>
+      <div class="h-4 w-px bg-white/10"></div>
+      <div class="flex items-center space-x-2">
+        <div class="w-8 h-4 rounded border border-slate-500 p-0.5 flex items-center">
+          <div class="bg-emerald-500 h-full w-[94%] rounded-sm" id="battery-level-bar"></div>
+        </div>
+        <span class="text-emerald-400 font-mono font-semibold" id="battery-voltage">12.4V (94%)</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN HUD -->
+  <main class="flex-grow p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-7xl mx-auto w-full">
+    
+    <!-- LEFT PANEL: CONFIGURATION AND LAUNCH CONTROL (5 Columns) -->
+    <div class="lg:col-span-5 flex flex-col space-y-6">
+      
+      <!-- Panel 1: Profile Selector -->
+      <section class="glass rounded-xl p-5 shadow-xl flex flex-col space-y-4">
+        <div class="flex items-center justify-between border-b border-white/5 pb-2">
+          <h2 class="text-md font-semibold text-slate-200 uppercase tracking-wider flex items-center space-x-2">
+            <svg class="h-4 w-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            </svg>
+            <span>Target Environment & Mission</span>
+          </h2>
+          <span class="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded text-slate-400">Step 1</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <!-- Mode Selector -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">Execution Environment</label>
+            <div class="flex space-x-2">
+              <button onclick="setEnv('sim')" id="btn-env-sim" class="flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                Simulation
+              </button>
+              <button onclick="setEnv('real')" id="btn-env-real" class="flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-slate-200">
+                Real Flight
+              </button>
+            </div>
+          </div>
+
+          <!-- Localization Selector -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">Localization Source</label>
+            <div class="flex space-x-2">
+              <button onclick="setLocalization('vision')" id="btn-loc-vision" class="flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                Vision (VIO)
+              </button>
+              <button onclick="setLocalization('gps')" id="btn-loc-gps" class="flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-slate-200">
+                GPS
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mission Dropdown -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">Select Mission Profile</label>
+          <select id="mission-select" onchange="loadMissionParams()" class="w-full bg-space-850 border border-white/10 rounded-lg py-2.5 px-3 text-sm focus:outline-none focus:border-cyan-400 text-slate-200 transition-colors">
+            <option value="square_mission">Square Waypoint Mission (square_mission)</option>
+            <option value="offboard_control_node">takeoff & Hover Dwell (offboard_control_node)</option>
+          </select>
+        </div>
+      </section>
+
+      <!-- Panel 2: Parameter Tuning Form -->
+      <section class="glass rounded-xl p-5 shadow-xl flex flex-col space-y-4 flex-grow">
+        <div class="flex items-center justify-between border-b border-white/5 pb-2">
+          <h2 class="text-md font-semibold text-slate-200 uppercase tracking-wider flex items-center space-x-2">
+            <svg class="h-4 w-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>Live Parameters</span>
+          </h2>
+          <span class="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded text-slate-400">Step 2</span>
+        </div>
+
+        <div id="params-container" class="space-y-4 max-h-[300px] overflow-y-auto pr-1">
+          <!-- Dynamic parameter inputs will be rendered here -->
+        </div>
+
+        <!-- Launch Buttons -->
+        <div class="pt-4 border-t border-white/5 flex flex-col space-y-3">
+          <button id="btn-launch" onclick="startPreFlightChecks()" class="w-full bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-lg shadow-lg shadow-cyan-500/20 glow-cyan transition-all duration-300 flex items-center justify-center space-x-2">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" stroke-dasharray="100" stroke-dashoffset="0" />
+            </svg>
+            <span>Run Pre-Flight & Launch</span>
+          </button>
+          
+          <button id="btn-abort" onclick="abortMission()" class="hidden w-full bg-red-600/30 border border-red-500/40 hover:bg-red-600/50 text-red-200 font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center space-x-2">
+            <span class="h-2 w-2 rounded-full bg-red-500 pulse-indicator"></span>
+            <span>ABORT & FORCE EMERGENCY LAND</span>
+          </button>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- RIGHT PANEL: DIAGNOSTICS, TELEMETRY, LOGS (7 Columns) -->
+    <div class="lg:col-span-7 flex flex-col space-y-6">
+      
+      <!-- Panel 3: Pre-Flight Diagnostics Checklist & Telemetry -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        <!-- Checklist -->
+        <section class="glass rounded-xl p-5 shadow-xl flex flex-col space-y-4">
+          <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-white/5 pb-2">Pre-Flight Diagnostics</h2>
+          
+          <div class="flex flex-col space-y-2.5 text-sm" id="checklist-container">
+            <!-- Parameter Limits -->
+            <div class="flex items-center justify-between" id="check-params">
+              <div class="flex items-center space-x-2">
+                <span class="status-icon text-slate-500 font-semibold">•</span>
+                <span class="text-slate-300">Parameter Safety Bounds</span>
+              </div>
+              <span class="status-text text-xs font-mono text-slate-500">PENDING</span>
+            </div>
+            
+            <!-- FC Connection -->
+            <div class="flex items-center justify-between" id="check-fc">
+              <div class="flex items-center space-x-2">
+                <span class="status-icon text-slate-500 font-semibold">•</span>
+                <span class="text-slate-300">Flight Controller (Pixhawk)</span>
+              </div>
+              <span class="status-text text-xs font-mono text-slate-500">PENDING</span>
+            </div>
+            
+            <!-- Sensor Alignment -->
+            <div class="flex items-center justify-between" id="check-ekf">
+              <div class="flex items-center space-x-2">
+                <span class="status-icon text-slate-500 font-semibold">•</span>
+                <span class="text-slate-300">Estimator Filter (EKF2)</span>
+              </div>
+              <span class="status-text text-xs font-mono text-slate-500">PENDING</span>
+            </div>
+
+            <!-- VIO Flow -->
+            <div class="flex items-center justify-between" id="check-vio">
+              <div class="flex items-center space-x-2">
+                <span class="status-icon text-slate-500 font-semibold">•</span>
+                <span class="text-slate-300" id="check-vio-label">Visual Odometry Flow</span>
+              </div>
+              <span class="status-text text-xs font-mono text-slate-500">PENDING</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Live Telemetry Stats -->
+        <section class="glass rounded-xl p-5 shadow-xl flex flex-col space-y-4">
+          <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-white/5 pb-2">Live Telemetry HUD</h2>
+          
+          <div class="grid grid-cols-2 gap-4 text-center">
+            <div class="bg-space-900/50 border border-white/5 p-3 rounded-lg">
+              <span class="block text-[10px] uppercase font-semibold text-slate-400 tracking-wider">Altitude</span>
+              <span class="text-2xl font-bold font-mono text-cyan-400" id="hud-altitude">0.00 <span class="text-xs">m</span></span>
+            </div>
+            <div class="bg-space-900/50 border border-white/5 p-3 rounded-lg">
+              <span class="block text-[10px] uppercase font-semibold text-slate-400 tracking-wider">Horizontal Speed</span>
+              <span class="text-2xl font-bold font-mono text-cyan-400" id="hud-speed">0.00 <span class="text-xs">m/s</span></span>
+            </div>
+            <div class="bg-space-900/50 border border-white/5 p-3 rounded-lg col-span-2 flex items-center justify-between px-4 py-2.5">
+              <span class="text-[10px] uppercase font-semibold text-slate-400 tracking-wider text-left">Attitude (P/R/Y)</span>
+              <span class="text-sm font-bold font-mono text-slate-200" id="hud-attitude">0.0° / 0.0° / 0.0°</span>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- Panel 4: External Visualizers Fallback Banner -->
+      <section class="glass rounded-xl p-4 border border-cyan-500/20 bg-cyan-950/10 flex items-start space-x-3 shadow-md">
+        <div class="text-cyan-400 p-1">
+          <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        </div>
+        <div class="text-xs text-cyan-200">
+          <h3 class="font-bold uppercase tracking-wider text-cyan-300">Desktop Display Integration</h3>
+          <p class="mt-0.5 leading-relaxed text-cyan-300/80">
+            To prevent system slowdowns, raw camera streams run in <code class="font-mono text-white bg-slate-900 px-1 py-0.5 rounded">rqt_image_view</code> and coordinate path lines run in <code class="font-mono text-white bg-slate-900 px-1 py-0.5 rounded">rviz2</code> on display display <code class="font-mono text-white bg-slate-900 px-1 py-0.5 rounded">:0</code>.
+          </p>
+        </div>
+      </section>
+
+      <!-- Panel 5: Simulated Operator Terminal Logs -->
+      <section class="glass rounded-xl p-5 shadow-xl flex flex-col space-y-3 flex-grow h-[260px]">
+        <div class="flex items-center justify-between border-b border-white/5 pb-2">
+          <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center space-x-2">
+            <span class="h-1.5 w-1.5 rounded-full bg-cyan-400 pulse-indicator"></span>
+            <span>Console Stream</span>
+          </h2>
+          <span class="text-[9px] font-mono text-slate-500">ROS2_AUTONOMY_STDERR</span>
+        </div>
+
+        <div id="terminal" class="bg-black/60 border border-white/5 rounded-lg p-4 font-mono text-xs text-cyan-300 flex-grow overflow-y-auto space-y-1.5 h-[170px]">
+          <div>[GCP] operator console initialized. Select environment and parameters to proceed.</div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <footer class="mt-auto py-4 text-center text-xs text-slate-500 border-t border-white/5">
+    <p>PX4 GPS-Denied Operator Dashboard &copy; 2026. Sandbox mode enabled.</p>
+  </footer>
+
+  <!-- Mock interaction script for first look -->
+  <script>
+    // Configuration database matching sim_params.yaml & hw_params.yaml
+    const paramDatabase = {
+      sim: {
+        square_mission: {
+          takeoff_height_m: { val: 2.0, desc: 'NED Target Climb Height' },
+          max_velocity_m_s: { val: 0.8, desc: 'Maximum Cruise Velocity' },
+          side_length_m: { val: 3.0, desc: 'Square side boundary distance' },
+          geofence_margin_m: { val: 2.0, desc: 'Horizontal safety margin' },
+          control_rate_hz: { val: 10.0, desc: 'Setpoints publication frequency' },
+          hover_seconds: { val: 5.0, desc: 'Initial waypoint hold duration' }
+        },
+        offboard_control_node: {
+          takeoff_height_m: { val: 2.0, desc: 'NED Climb Target' },
+          hover_seconds: { val: 5.0, desc: 'Hover hold before landing' },
+          control_rate_hz: { val: 10.0, desc: 'Heartbeat setpoint rate' },
+          waypoint_tolerance_m: { val: 0.5, desc: 'Arrival capture radius' },
+          max_velocity_m_s: { val: 1.0, desc: 'Takeoff rate speed limit' }
+        }
+      },
+      real: {
+        square_mission: {
+          takeoff_height_m: { val: 1.5, desc: 'Climb target (Hardware Floor Limit)' },
+          max_velocity_m_s: { val: 0.1, desc: 'Slower cruise speed for test tethering' },
+          side_length_m: { val: 2.0, desc: 'Compact square perimeter footprint' },
+          geofence_margin_m: { val: 1.0, desc: 'Failsafe boundary distance limit' },
+          control_rate_hz: { val: 10.0, desc: 'Offboard control rate' },
+          hover_seconds: { val: 5.0, desc: 'Hold check dwell' }
+        },
+        offboard_control_node: {
+          takeoff_height_m: { val: 1.5, desc: 'Initial testing altitude target' },
+          hover_seconds: { val: 5.0, desc: 'Stabilized hover test dwell' },
+          control_rate_hz: { val: 10.0, desc: 'Heartbeat command rate' },
+          waypoint_tolerance_m: { val: 0.7, desc: 'GPS-denied threshold margin' },
+          max_velocity_m_s: { val: 0.5, desc: 'Safe climb velocity ceiling' }
+        }
+      }
+    };
+
+    let activeEnv = 'sim';
+    let activeLocalization = 'vision';
+    let launchInterval = null;
+    let telemetryInterval = null;
+
+    function logTerminal(msg, type = 'info') {
+      const term = document.getElementById('terminal');
+      const div = document.createElement('div');
+      
+      let colorClass = 'text-cyan-300';
+      if (type === 'warn') colorClass = 'text-yellow-400';
+      if (type === 'error') colorClass = 'text-red-400';
+      if (type === 'success') colorClass = 'text-emerald-400';
+      
+      div.className = `${colorClass}`;
+      
+      const time = new Date().toISOString().split('T')[1].slice(0, 8);
+      div.innerHTML = `<span class="text-slate-500 font-sans">[${time}]</span> ${msg}`;
+      term.appendChild(div);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function setEnv(env) {
+      if (launchInterval || telemetryInterval) return; // Locked during flight
+      activeEnv = env;
+      
+      const simBtn = document.getElementById('btn-env-sim');
+      const realBtn = document.getElementById('btn-env-real');
+      
+      if (env === 'sim') {
+        simBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30";
+        realBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-slate-200";
+        logTerminal(`Switched workspace load context to SIMULATION (loading sim_params.yaml)`);
+      } else {
+        realBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30";
+        simBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-slate-200";
+        logTerminal(`Switched workspace load context to REAL HARDWARE (loading hw_params.yaml)`, 'warn');
+      }
+      loadMissionParams();
+    }
+
+    function setLocalization(loc) {
+      if (launchInterval || telemetryInterval) return; // Locked
+      activeLocalization = loc;
+      
+      const visionBtn = document.getElementById('btn-loc-vision');
+      const gpsBtn = document.getElementById('btn-loc-gps');
+      const vioLabel = document.getElementById('check-vio-label');
+      
+      if (loc === 'vision') {
+        visionBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30";
+        gpsBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-slate-200";
+        vioLabel.innerText = "Visual Odometry Flow";
+        logTerminal(`Selected localization source: VISION (OpenVINS feedback)`);
+      } else {
+        gpsBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30";
+        visionBtn.className = "flex-1 py-2 rounded-lg font-semibold text-sm transition-all duration-200 bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-slate-200";
+        vioLabel.innerText = "GPS Position Flow";
+        logTerminal(`Selected localization source: GPS (Global Coordinates feed)`, 'warn');
+      }
+    }
+
+    function loadMissionParams() {
+      const select = document.getElementById('mission-select');
+      const selectedMission = select.value;
+      const params = paramDatabase[activeEnv][selectedMission];
+      
+      const container = document.getElementById('params-container');
+      container.innerHTML = '';
+      
+      for (const [key, param] of Object.entries(params)) {
+        const div = document.createElement('div');
+        div.className = 'flex flex-col space-y-1 bg-space-900/40 p-2.5 rounded-lg border border-white/5';
+        
+        div.innerHTML = `
+          <div class="flex justify-between items-center text-xs">
+            <span class="font-mono text-slate-300 font-semibold">${key}</span>
+            <span class="text-slate-400">${param.desc}</span>
+          </div>
+          <input type="number" id="input-${key}" value="${param.val}" step="0.1" 
+                 class="w-full bg-space-950 border border-white/15 rounded py-1.5 px-2.5 text-xs text-cyan-300 focus:outline-none focus:border-cyan-400 transition-colors font-mono">
+        `;
+        container.appendChild(div);
+      }
+      logTerminal(`Loaded parameters profile for node '${selectedMission}'`);
+    }
+
+    // Reset diagnostics indicators
+    function resetChecklist() {
+      const checklist = ['check-params', 'check-fc', 'check-ekf', 'check-vio'];
+      checklist.forEach(id => {
+        const el = document.getElementById(id);
+        el.querySelector('.status-icon').innerText = '•';
+        el.querySelector('.status-icon').className = 'status-icon text-slate-500 font-semibold';
+        el.querySelector('.status-text').innerText = 'PENDING';
+        el.querySelector('.status-text').className = 'status-text text-xs font-mono text-slate-500';
+      });
+    }
+
+    function updateCheckStatus(id, status, details = '') {
+      const el = document.getElementById(id);
+      const icon = el.querySelector('.status-icon');
+      const text = el.querySelector('.status-text');
+      
+      if (status === 'checking') {
+        icon.innerText = '↺';
+        icon.className = 'status-icon text-cyan-400 animate-spin font-semibold mr-1';
+        text.innerText = 'VERIFYING...';
+        text.className = 'status-text text-xs font-mono text-cyan-400 animate-pulse';
+      } else if (status === 'passed') {
+        icon.innerText = '✓';
+        icon.className = 'status-icon text-emerald-400 font-bold';
+        text.innerText = details || 'OK';
+        text.className = 'status-text text-xs font-mono text-emerald-400';
+      } else if (status === 'failed') {
+        icon.innerText = '✗';
+        icon.className = 'status-icon text-red-500 font-bold';
+        text.innerText = details || 'ERR';
+        text.className = 'status-text text-xs font-mono text-red-500';
+      }
+    }
+
+    function startPreFlightChecks() {
+      if (launchInterval || telemetryInterval) return;
+      
+      resetChecklist();
+      logTerminal(`Pre-flight diagnostic request initialized. Checking parameters...`);
+      
+      // Step 1: Check parameters
+      updateCheckStatus('check-params', 'checking');
+      
+      let currentStep = 0;
+      
+      launchInterval = setInterval(() => {
+        currentStep++;
+        
+        if (currentStep === 1) {
+          // Check limits
+          const select = document.getElementById('mission-select');
+          const takeoffHeightInput = document.getElementById('input-takeoff_height_m');
+          let height = takeoffHeightInput ? parseFloat(takeoffHeightInput.value) : 2.0;
+          
+          if (isNaN(height) || height <= 0 || height > 5.0) {
+            updateCheckStatus('check-params', 'failed', 'OUT OF BOUNDS');
+            logTerminal(`Pre-flight abort: Parameter 'takeoff_height_m' (${height}m) exceeds safety limit (max 5.0m)`, 'error');
+            clearInterval(launchInterval);
+            launchInterval = null;
+            return;
+          }
+          
+          updateCheckStatus('check-params', 'passed');
+          logTerminal(`Parameter safety check complete: all parameters inside bounds. Checking Pixhawk connectivity...`);
+          updateCheckStatus('check-fc', 'checking');
+          
+        } else if (currentStep === 2) {
+          // Check FC connection
+          updateCheckStatus('check-fc', 'passed', 'CONNECTED');
+          logTerminal(`Flight controller connection: heartbeat verified (12.4V voltage stable). Aligning EKF2...`);
+          updateCheckStatus('check-ekf', 'checking');
+          
+        } else if (currentStep === 3) {
+          // Check EKF
+          updateCheckStatus('check-ekf', 'passed', 'ALIGNED');
+          logTerminal(`EKF2 filter aligned: attitude and yaw estimators reported stable. Testing localization topic...`);
+          updateCheckStatus('check-vio', 'checking');
+          
+        } else if (currentStep === 4) {
+          // Check VIO flow or GPS flow
+          if (activeLocalization === 'vision') {
+            updateCheckStatus('check-vio', 'passed', '20.4 Hz');
+            logTerminal(`OpenVINS initialized successfully. Visual odometry rate stable at 20.4 Hz.`, 'success');
+          } else {
+            updateCheckStatus('check-vio', 'passed', '3D FIX');
+            logTerminal(`GPS position stream active (12 satellites found, precision: 0.8m).`, 'success');
+          }
+          
+          // Clear checks and launch
+          clearInterval(launchInterval);
+          launchInterval = null;
+          logTerminal(`ALL PRE-FLIGHT DIAGNOSTICS PASSED. CLEAR TO LAUNCH.`, 'success');
+          launchMission();
+        }
+      }, 1000);
+    }
+
+    function launchMission() {
+      document.getElementById('btn-launch').classList.add('hidden');
+      document.getElementById('btn-abort').classList.remove('hidden');
+      
+      const select = document.getElementById('mission-select');
+      const missionName = select.options[select.selectedIndex].text;
+      
+      logTerminal(`Launching target node: ${missionName}...`, 'success');
+      logTerminal(`Sending OFFBOARD mode signal...`);
+      logTerminal(`ARMING MOTORS...`, 'warn');
+      logTerminal(`Takeoff sequence initialized. Target altitude: ${document.getElementById('input-takeoff_height_m').value}m.`);
+      
+      let alt = 0.0;
+      let targetAlt = parseFloat(document.getElementById('input-takeoff_height_m').value);
+      let speed = 0.0;
+      let roll = 0.0;
+      let pitch = 0.0;
+      let yaw = 0.0;
+      let time = 0;
+      
+      telemetryInterval = setInterval(() => {
+        time += 0.2;
+        
+        // Simulating flight curves
+        if (alt < targetAlt - 0.05) {
+          alt += 0.15;
+          speed = 0.8;
+          pitch = 2.4;
+          yaw += 0.2;
+        } else {
+          alt = targetAlt + Math.sin(time) * 0.03; // Soft hover drift
+          speed = Math.max(0, speed - 0.1);
+          pitch = Math.sin(time) * 0.5;
+          roll = Math.cos(time) * 0.4;
+        }
+        
+        document.getElementById('hud-altitude').innerHTML = `${alt.toFixed(2)} <span class="text-xs">m</span>`;
+        document.getElementById('hud-speed').innerHTML = `${speed.toFixed(2)} <span class="text-xs">m/s</span>`;
+        document.getElementById('hud-attitude').innerText = `${pitch.toFixed(1)}° / ${roll.toFixed(1)}° / ${yaw.toFixed(1)}°`;
+        
+        // Console telemetry reporting every 2 seconds
+        if (Math.round(time * 5) % 10 === 0) {
+          logTerminal(`[NAV] Current Pose: x=0.00, y=0.00, z=${(-alt).toFixed(3)} | Yaw=${yaw.toFixed(1)}°`);
+        }
+      }, 200);
+    }
+
+    function abortMission() {
+      if (telemetryInterval) {
+        clearInterval(telemetryInterval);
+        telemetryInterval = null;
+      }
+      if (launchInterval) {
+        clearInterval(launchInterval);
+        launchInterval = null;
+      }
+      
+      logTerminal(`EMERGENCY ABORT SIGNAL SENT TO FLIGHT SYSTEM!`, 'error');
+      logTerminal(`Triggering AUTO_LAND descend rate...`, 'warn');
+      
+      document.getElementById('hud-speed').innerText = '0.00 m/s';
+      
+      let alt = parseFloat(document.getElementById('hud-altitude').innerText);
+      
+      let landInterval = setInterval(() => {
+        if (alt > 0.1) {
+          alt -= 0.2;
+          document.getElementById('hud-altitude').innerHTML = `${Math.max(0, alt).toFixed(2)} <span class="text-xs">m</span>`;
+        } else {
+          clearInterval(landInterval);
+          document.getElementById('hud-altitude').innerHTML = `0.00 <span class="text-xs">m</span>`;
+          document.getElementById('btn-abort').classList.add('hidden');
+          document.getElementById('btn-launch').classList.remove('hidden');
+          resetChecklist();
+          logTerminal(`Motors disarmed. System safe.`, 'success');
+        }
+      }, 100);
+    }
+
+    // Initial load
+    window.onload = () => {
+      loadMissionParams();
+      // Animate some random minor CPU fluctuation
+      setInterval(() => {
+        document.getElementById('cpu-load').innerText = `${(3.5 + Math.random() * 2).toFixed(1)}%`;
+      }, 3000);
+    };
+  </script>
+</body>
+</html>
