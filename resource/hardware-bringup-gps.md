@@ -23,20 +23,31 @@ first, motors second, free flight third — never skip straight to
 "let's just try it in the air." Once a GPS mission flies reliably and
 repeatably, continue to [Phase 2: VIO](hardware-bringup-vio.md).
 
+**Default setup: ONE physical connection, not two.** This project's
+software can automatically switch PX4's GPS/vision fusion source over a
+second MAVLink link — but if you don't want to wire that up, you don't
+have to: configure the fusion source once by hand via QGroundControl
+instead, over the same single USB connection everything else already
+uses. That's this guide's default path; the automated-switch option is
+documented too, clearly marked optional. See [step 3](#wiring) for the
+wiring diagram and [step 5](#manual-config) for the manual configuration
+steps.
+
 ## Contents
 
 1. [What you need](#what-you-need)
 2. [Flash PX4 to the Pixhawk 6C](#flash-px4)
 3. [Physical connections: Pixhawk ↔ Orange Pi](#wiring)
 4. [Configure PX4 for GPS flight](#px4-config)
-5. [Set up the Orange Pi](#opi-setup)
-6. [Build the hardware image](#build)
-7. [Derive a real geofence limit](#geofence)
-8. [Dry run — verify everything before any prop spins](#dry-run)
-9. [Restrained hover test — props on](#restrained-hover)
-10. [First free hover](#first-hover)
-11. [First GPS mission](#first-mission)
-12. [Troubleshooting](#troubleshooting)
+5. [Configure the localization source manually](#manual-config)
+6. [Set up the Orange Pi](#opi-setup)
+7. [Build the hardware image](#build)
+8. [Derive a real geofence limit](#geofence)
+9. [Dry run — verify everything before any prop spins](#dry-run)
+10. [Restrained hover test — props on](#restrained-hover)
+11. [First free hover](#first-hover)
+12. [First GPS mission](#first-mission)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -55,9 +66,11 @@ repeatably, continue to [Phase 2: VIO](hardware-bringup-vio.md).
   5V, more if you'll run the camera in Phase 2).
 - An external GPS + compass module compatible with PX4 (whatever your
   Pixhawk 6C's GPS port expects — check its pinout).
-- **Two USB cables** (see [step 3](#wiring) for why you need two, not
-  one) — or one USB cable plus a USB-to-TTY serial adapter, depending on
-  which wiring option you pick.
+- **One USB cable** (Pixhawk ↔ Orange Pi — see [step 3](#wiring)). If you
+  already have a USB-to-TTL adapter and want the automated runtime
+  mode-switch instead of the default manual-QGroundControl setup, that
+  adapter is all you need in addition — see [step 3](#wiring)'s optional
+  Link 2.
 - A microSD card (or NVMe, if your Orange Pi 5 Plus carrier board
   supports it) for **Ubuntu 22.04** on the Orange Pi 5 Plus.
 - Props, a battery, a safe open outdoor test area, and normal RC safety
@@ -65,9 +78,9 @@ repeatably, continue to [Phase 2: VIO](hardware-bringup-vio.md).
   recommended even though this stack flies offboard (see
   [the dry-run section's RC failsafe checks](#dry-run)).
 - A laptop with QGroundControl installed, for firmware flashing and PX4
-  parameter work (steps 2, 4, and the dry run) — this is the one piece of
-  this whole project that genuinely needs a tool outside Docker, since it
-  talks to the Pixhawk directly over USB before any of this repo's own
+  parameter work (steps 2, 4, 5, and the dry run) — this is the one piece
+  of this whole project that genuinely needs a tool outside Docker, since
+  it talks to the Pixhawk directly over USB before any of this repo's own
   software is involved at all.
 
 <a id="flash-px4"></a>
@@ -80,7 +93,9 @@ the sim image, `px4_msgs`/`px4_ros_com` branches) — the physical Pixhawk
 between the firmware and this repo's `px4_msgs` will cause silent DDS
 failures (confirmed as a real failure class in sim — see
 [Known Issues #6](known-issues.md#issue-6) for the versioned-topic-name
-consequence of a version mismatch).
+consequence of a version mismatch). This is also, as of this guide's
+authoring, the current latest PX4 stable release (not an old pin) — see
+[PX4's own release notes](https://docs.px4.io/main/en/releases/index).
 
 1. Connect the Pixhawk 6C to your laptop via its USB port (USB-C on this
    board — confirm against your specific unit, connector types have
@@ -94,7 +109,10 @@ consequence of a version mismatch).
    list yet (firmware release timing vs. QGC's own list can lag), flash
    from a manually-downloaded `.px4` build of the `v1.17.0` tag from
    PX4's own releases instead — do not substitute a different version
-   "close enough."
+   "close enough," and specifically do not substitute the `v1.18.0-alpha1`
+   pre-release you may see listed — this project's own history has a
+   documented real incident from trusting an alpha PX4 build
+   ([Known Issues #3](known-issues.md#issue-3)).
 6. **Airframe**: select the closest matching quadcopter X airframe for a
    generic/custom frame (e.g. Generic Quadcopter). Do NOT select the
    x500-specific airframe — that's this project's SIM airframe (a real,
@@ -117,19 +135,18 @@ consequence of a version mismatch).
 
 ## 3. Physical connections: Pixhawk ↔ Orange Pi
 
-**You need TWO independent serial links, not one.** This is a real design
-point, not an arbitrary choice: this stack talks to PX4 over uXRCE-DDS
-(nearly everything — arm, offboard, telemetry, the whole
-`common_control`/`common_missions` stack) but the uXRCE-DDS bridge
-**cannot set PX4 parameters** in this pinned version
-([Reference §8](reference.md#sec-8);
-[Known Issues #14](known-issues.md#issue-14)) — so the one-shot
-localization-source switch (`set_localization_source`) talks to PX4 over
-a **separate MAVLink connection**. Two different wire protocols need two
-different transport links; there is no way to multiplex both PX4 protocol
-stacks over a single serial port here.
+![Wiring diagram: Pixhawk 6C connected to Orange Pi 5 Plus over a single required USB link, with an optional dashed USB-to-TTL link for automated mode switching](images/hw-wiring-diagram.svg)
 
-### Link 1 — uXRCE-DDS, over USB (recommended)
+**The default setup needs exactly ONE connection.** Everything this stack
+does — arm, offboard control, telemetry — goes over PX4's native
+uXRCE-DDS bridge, and that's a single USB link. The only reason a SECOND
+link would ever be needed is if you want PX4's GPS/vision fusion source
+switched *automatically* at every launch instead of configuring it by
+hand once ([step 5](#manual-config)) — most first bring-ups don't need
+that, so it's documented here as an explicitly optional add-on, not a
+requirement.
+
+### Link 1 — uXRCE-DDS, over USB (required)
 
 Plug the Pixhawk 6C's own USB port directly into a USB-A/C port on the
 Orange Pi with a standard USB data cable. PX4 exposes its uXRCE-DDS
@@ -141,18 +158,24 @@ your `PIXHAWK_SERIAL_PORT` (commonly `/dev/ttyACM0` on Linux for a native
 USB-CDC device like this — **confirm, don't assume**, see
 [the dry run](#dry-run)).
 
-### Link 2 — MAVLink, for the localization-source switch only
+### Link 2 — MAVLink, OPTIONAL, only for automated mode-switching
 
-This link needs its own physical connection, separate from Link 1. Two
-options, in order of how strongly this guide recommends them:
+Skip this whole subsection unless you specifically want
+`use_mavlink_switch:=true` ([step 5](#manual-config) explains the
+tradeoff). If you're using the default manual-QGroundControl setup, you
+do not need this link, this pinout, or the adapter at all.
 
-**Option A (recommended for a first bring-up, and what you already
-have): a USB-to-TTL adapter.** This is the same class of device whether
-it's sold as "USB-to-TTY," "USB-to-TTL," or "USB-to-serial" — an FTDI,
-CP2102, CH340G, or PL2303-based module, all functionally interchangeable
-for this purpose. If you already own one of these, use it — it's the
-safer default specifically because a wiring mistake here damages a $5
-module, not either of your two real boards.
+If you do want it: this link needs its own physical connection, separate
+from Link 1. Two options, in order of how strongly this guide recommends
+them:
+
+**Option A (recommended, and what you may already have): a USB-to-TTL
+adapter.** This is the same class of device whether it's sold as
+"USB-to-TTY," "USB-to-TTL," or "USB-to-serial" — an FTDI, CP2102,
+CH340G, or PL2303-based module, all functionally interchangeable for
+this purpose. If you already own one of these, use it — it's the safer
+default specifically because a wiring mistake here damages a $5 module,
+not either of your two real boards.
 
 Typical USB-to-TTL modules break out 4-6 pins, usually silkscreen-labeled
 on the board itself:
@@ -209,7 +232,8 @@ versa, never TX-to-TX. If the link doesn't come up in
 [the dry run](#dry-run), swap TX/RX before assuming anything more
 complicated is wrong.
 
-Configure the matching PX4 side in QGroundControl → **Parameters**:
+If you've wired Link 2, configure the matching PX4 side in
+QGroundControl → **Parameters**:
 - Confirm `UXRCE_DDS_CFG` (or your Pixhawk 6C's equivalent DDS client
   port-select param) points at USB, matching Link 1 above.
 - Set `MAV_1_CONFIG` (or the next free `MAV_x_CONFIG` slot) to **TELEM2**,
@@ -261,7 +285,7 @@ Configure the matching PX4 side in QGroundControl → **Parameters**:
    - PX4's own **geofence** (`GF_*` parameters, independent of this
      project's own software geofence in `offboard_control_node.py`):
      configure a real PX4-level geofence around your test area too —
-     see [step 7](#geofence) for deriving the matching value for this
+     see [step 8](#geofence) for deriving the matching value for this
      project's own software geofence. This project's own geofence
      ([Reference §7](reference.md#sec-7),
      [Known Issues #24](known-issues.md#issue-24)) is real, tested
@@ -269,9 +293,62 @@ Configure the matching PX4 side in QGroundControl → **Parameters**:
      hardware-level failsafe is a second, independent one worth having
      for a first real flight.
 
+<a id="manual-config"></a>
+
+## 5. Configure the localization source manually
+
+This project's software CAN automatically switch PX4's fusion source
+(GPS vs. vision) at every launch — but that needs [step 3](#wiring)'s
+optional Link 2 wired. The default this guide recommends instead: set it
+by hand, once, over QGroundControl — same USB connection as Link 1,
+nothing extra to wire. PX4 stores parameters in its own flash, so this
+persists across power cycles; it's a one-time-per-mode step, not a
+per-flight one.
+
+Open QGroundControl → **Vehicle Setup → Parameters**, search for each
+name below, type the new value, and press Enter to confirm each write.
+
+**For GPS mode** (this guide's scope):
+
+| Parameter | Value | Note |
+|---|---|---|
+| `EKF2_GPS_CTRL` | `7` | HPOS+VPOS+VEL — this is PX4's OWN default, so most users won't need to touch it at all; only relevant if it was previously changed for a vision-mode test |
+| `EKF2_EV_CTRL` | `0` | Vision fusion off |
+
+**For vision mode** ([Phase 2: VIO](hardware-bringup-vio.md) — not this
+guide's scope, listed here so you know what changes when you get there):
+
+| Parameter | Value | Note |
+|---|---|---|
+| `EKF2_GPS_CTRL` | `0` | GPS fusion off |
+| `EKF2_EV_CTRL` | `5` | HPOS+VEL from vision |
+| `EKF2_EV_POS_X` | *(your measured value)* | Vision sensor lever arm, FRD — see [Phase 2's mounting step](hardware-bringup-vio.md#mount) |
+| `EKF2_EV_POS_Y` | *(your measured value)* | Same |
+| `EKF2_EV_POS_Z` | *(your measured value)* | Same |
+| `EKF2_EVP_NOISE` | `0.3` | Vision position-noise floor — see [Reference §8](reference.md#sec-8) for why this matters |
+| `EKF2_EVV_NOISE` | `0.15` | Vision velocity-noise floor |
+
+**Switching back to GPS mode when you're done testing vision** is the
+same table, reversed — set `EKF2_GPS_CTRL` back to `7` and `EKF2_EV_CTRL`
+back to `0` before your next GPS flight. There's no software reminder for
+this the way the automated switch's `LOCALIZATION=gps|vision` gives you —
+with the manual/default setup, it's on you to remember which mode PX4 is
+currently configured for. Confirming the current mode is exactly what
+[the dry run's manual-config check](#dry-run) is for — always re-verify
+the live values rather than trusting memory.
+
+With this done, running `make hw-flight-test`/`make hw-mission` with no
+extra flags does exactly what you want:
+`use_mavlink_switch` defaults to `false`, so `hw.launch.py` launches the
+mission/hover node (and, for vision, the real VIO pipeline) directly,
+never touching PX4 parameters and never needing Link 2. If you'd rather
+restore the fully-automated behavior instead (accepting the second wired
+link), pass `USE_MAVLINK_SWITCH=true MAVLINK_URL=<your Link 2 device>` —
+see [Reference](reference.md) for the full variable list.
+
 <a id="opi-setup"></a>
 
-## 5. Set up the Orange Pi
+## 6. Set up the Orange Pi
 
 1. **Download Ubuntu 22.04 for the Orange Pi 5 Plus specifically** — from
    Orange Pi's own official downloads (orangepi.net's product page for
@@ -332,31 +409,38 @@ Configure the matching PX4 side in QGroundControl → **Parameters**:
 
 <a id="build"></a>
 
-## 6. Build the hardware image
+## 7. Build the hardware image
 
 ```bash
 make build-hw
 ```
 
-Builds `docker/Dockerfile.hw_autonomy` — ARM64-native (no cross-compile),
-so this runs **on the Orange Pi itself** and will take a while,
-particularly the `librealsense2` from-source build (that Dockerfile's own
-header explains why it can't come from apt on ARM64). This is the exact
-kind of step this project's own history says to expect real, silent-until-
-you-check failures from (see [Known Issues](known-issues.md) generally,
-and this Dockerfile's own comments for the specific risk points already
-anticipated) — watch the build output, don't assume a clean exit means
-everything inside actually works, and file/fix problems as you find them.
-GPS-only bring-up doesn't strictly need `librealsense2`/`realsense-ros` to
-succeed, but `make build-hw` builds the whole image in one shot — if the
-RealSense layers fail and you want to unblock GPS testing immediately,
-comment those layers out of the Dockerfile temporarily rather than
-reworking the whole build; re-enable them before
-[Phase 2](hardware-bringup-vio.md).
+**This does NOT build the Gazebo/PX4-SITL simulator images — confirmed,
+not assumed.** `docker-compose.yml` scopes `px4-sim`/`ros2-autonomy` to a
+`sim` profile and `hw-autonomy` to a separate `hw` profile; `make
+build-hw` runs `docker compose --profile hw build`, which only builds
+services in the `hw` profile. There is no accidental Gazebo compile step
+sitting in this Orange Pi build — `Dockerfile.hw_autonomy` (what actually
+builds) never references Gazebo, PX4 SITL, or `ros_gz_bridge` at all, by
+design (see that Dockerfile's own header).
 
-Then bring the `hw` profile up (there is no sim equivalent to start here
-— `make sim` starts `px4-sim`, an x86_64 simulator container, which has
-no purpose on the Orange Pi):
+What it does build is `docker/Dockerfile.hw_autonomy` — ARM64-native (no
+cross-compile), so this runs **on the Orange Pi itself** and will still
+take a while, particularly the `librealsense2` from-source build (that
+Dockerfile's own header explains why it can't come from apt on ARM64).
+This is the exact kind of step this project's own history says to expect
+real, silent-until-you-check failures from (see
+[Known Issues](known-issues.md) generally, and this Dockerfile's own
+comments for the specific risk points already anticipated) — watch the
+build output, don't assume a clean exit means everything inside actually
+works, and file/fix problems as you find them. GPS-only bring-up doesn't
+strictly need `librealsense2`/`realsense-ros` to succeed, but `make
+build-hw` builds the whole image in one shot — if the RealSense layers
+fail and you want to unblock GPS testing immediately, comment those
+layers out of the Dockerfile temporarily rather than reworking the whole
+build; re-enable them before [Phase 2](hardware-bringup-vio.md).
+
+Then bring the `hw` profile up:
 
 ```bash
 docker compose --profile hw up -d
@@ -365,7 +449,7 @@ make build-ws-hw
 
 <a id="geofence"></a>
 
-## 7. Derive a real geofence limit
+## 8. Derive a real geofence limit
 
 `hw_params.yaml`'s `geofence_hard_limit_m: 10.0` is an **explicitly
 untested placeholder** — not derived from any real test area, unlike
@@ -388,13 +472,13 @@ position ([Reference §7](reference.md#sec-7)). Before any free flight:
 
 <a id="dry-run"></a>
 
-## 8. Dry run — verify everything before any prop spins
+## 9. Dry run — verify everything before any prop spins
 
 **Remove the props for this entire section.** Nothing below should ever
 command meaningful thrust, but the point of a dry run is removing even
 the possibility.
 
-### 8.1 Power-on and basic sanity
+### 9.1 Power-on and basic sanity
 
 1. Power the Pixhawk alone first (bench power or battery, your choice) —
    confirm it boots: listen for the startup tune, watch for the LED to
@@ -405,22 +489,23 @@ the possibility.
    uncomfortably hot to the touch within the first minute — a basic but
    real check before trusting either board with anything else.
 3. SSH into the Orange Pi and confirm `docker ps` shows `hw-autonomy`
-   running (from [step 6](#build)).
+   running (from [step 7](#build)).
 
-### 8.2 Confirm both serial links, by device enumeration
+### 9.2 Confirm the serial link(s), by device enumeration
 
-Do not assume `/dev/ttyUSB0`/`/dev/ttyACM0` — confirm both, one at a
-time:
+Do not assume `/dev/ttyUSB0`/`/dev/ttyACM0` — confirm by enumeration:
 
 ```bash
 ls -la /dev/tty* | grep -E 'ACM|USB'
 dmesg | grep -iE 'tty|usb' | tail -30
 ```
 
-Plug in one link at a time (DDS/USB, then MAVLink/adapter) and re-run
-`ls /dev/tty*` between each — the most reliable way to know which device
-node is which, rather than guessing from naming convention alone. Once
-confirmed, set both in `.env`:
+If you're using only Link 1 (the default), you should see one new device
+appear when you plug the Pixhawk's USB cable in. If you've also wired the
+optional Link 2, plug each in one at a time and re-run `ls /dev/tty*`
+between each — the most reliable way to know which device node is which,
+rather than guessing from naming convention alone. Once confirmed, set
+Link 1 in `.env`:
 
 ```bash
 # .env
@@ -428,14 +513,14 @@ PIXHAWK_SERIAL_PORT=/dev/ttyACM0   # whatever you actually confirmed above
 PIXHAWK_BAUD_RATE=921600
 ```
 
-(There's no `.env` entry for the MAVLink link — it's a per-invocation
-choice like `LOCALIZATION=`/`MISSION=`, passed as `MAVLINK_URL=` at the
-command line, matching this project's own established pattern for
-runtime-vs-build-time config — see
+(If you're using optional Link 2, there's no `.env` entry for it — it's a
+per-invocation choice like `LOCALIZATION=`/`MISSION=`, passed as
+`MAVLINK_URL=` at the command line, matching this project's own
+established pattern for runtime-vs-build-time config — see
 [Known Issues #19](known-issues.md#issue-19) for why a value like this
 belongs on the command line, not hardcoded into `.env`.)
 
-### 8.3 Confirm the DDS link carries real data
+### 9.3 Confirm the DDS link carries real data
 
 ```bash
 make shell-hw
@@ -447,32 +532,40 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 
 You should see the full `/fmu/in/*`/`/fmu/out/*` topic set, same as sim
 ([Reference §6](reference.md#sec-6)) — if you see nothing, the uXRCE-DDS
-agent isn't reaching PX4; recheck [step 8.2](#dry-run) before going
+agent isn't reaching PX4; recheck [step 9.2](#dry-run) before going
 further. This is the single most likely place for this bring-up's first
 real bug to show up — treat "topics exist but look stale/frozen" as a
 failure too, not just "topics missing entirely."
 
-### 8.4 Confirm the MAVLink link and the localization-source switch
+### 9.4 Confirm the localization source is configured correctly
 
+**Default setup** ([step 5](#manual-config)): confirm the live values in
+QGroundControl → **Parameters**, don't just trust what you set earlier —
+`EKF2_GPS_CTRL` should read `7` and `EKF2_EV_CTRL` should read `0` for
+this GPS-only phase. If either doesn't match, fix it now, before
+continuing — an unnoticed leftover vision-mode config from an earlier
+test is exactly the kind of thing a dry run exists to catch.
+
+**If you opted into `use_mavlink_switch:=true`** (optional Link 2
+wired): confirm that link instead —
 ```bash
 ros2 run common_perception set_localization_source \
-    --source gps --mavlink-url <your MAVLINK_URL from step 3>
+    --source gps --mavlink-url <your MAVLINK_URL>
 ```
-
 Expect `connected (system 1, component 0)` followed by confirmed
-`EKF2_GPS_CTRL`/`EKF2_EV_CTRL` parameter sets (GPS mode's values — see
-[Reference §8](reference.md#sec-8)). If this hangs on "connecting," the
-MAVLink link ([step 3](#wiring)) isn't up — recheck wiring, baud, and
-`MAV_1_CONFIG`/`MAV_1_MODE` before assuming a software problem.
+`EKF2_GPS_CTRL`/`EKF2_EV_CTRL` parameter sets. If this hangs on
+"connecting," the MAVLink link ([step 3](#wiring)) isn't up — recheck
+wiring, baud, and `MAV_1_CONFIG`/`MAV_1_MODE` before assuming a software
+problem.
 
-### 8.5 Sensor health
+### 9.5 Sensor health
 
 1. **GPS**: QGroundControl (or `ros2 topic echo
    /fmu/out/vehicle_gps_position --once` if you'd rather stay in the
    hw-autonomy shell) should show a genuine 3D fix, not just "GPS
    present."
 2. **EKF2 convergence**: wait for `pre_flight_checks_pass: true` in
-   `vehicle_status_v1`'s output (same field [step 8.3](#dry-run)'s
+   `vehicle_status_v1`'s output (same field [step 9.3](#dry-run)'s
    `echo` already showed you) — PX4's EKF2 needs real GPS lock and real
    sensor-bias convergence time here, the same
    ["arming rejected at first, this is normal" pattern documented in
@@ -484,7 +577,7 @@ MAVLink link ([step 3](#wiring)) isn't up — recheck wiring, baud, and
    or the Orange Pi itself can introduce real interference at the
    assembled vehicle's compass location specifically).
 
-### 8.6 RC link and failsafe checks
+### 9.6 RC link and failsafe checks
 
 Props still off:
 1. Confirm the RC transmitter is bound and QGroundControl's **Vehicle
@@ -501,7 +594,7 @@ Props still off:
    because "it's just a parameter, it must work"; confirming the
    configured behavior actually fires is the entire point of a dry run.
 
-### 8.7 Motor test (PX4's own tool, independent of this repo's software)
+### 9.7 Motor test (PX4's own tool, independent of this repo's software)
 
 QGroundControl → **Vehicle Setup → Motors** (or the **Actuators** tab on
 newer QGC) lets you spin each motor individually at low throttle. This
@@ -513,7 +606,7 @@ correctly command the airframe," which are different questions worth
 answering separately. Confirm every motor spins the expected direction
 for its position before continuing.
 
-### 8.8 This repo's own arm/offboard/land cycle
+### 9.8 This repo's own arm/offboard/land cycle
 
 ```bash
 make hw-flight-test
@@ -523,21 +616,21 @@ Props still off. Confirm: PX4 accepts the offboard mode switch, arming
 succeeds (`Armed and offboard — climbing to takeoff height` in the log —
 same code, same message as sim), then **immediately disarm manually**
 (`px4-commander disarm -f` from a second `shell-hw` session, or your RC
-kill switch, now confirmed working from [step 8.6](#dry-run)) rather
+kill switch, now confirmed working from [step 9.6](#dry-run)) rather
 than letting it try to "climb" with no real thrust — the point here is
 confirming the arm/offboard/command path works, not watching the motors
 spin uselessly.
 
-### 8.9 Dry-run checklist
+### 9.9 Dry-run checklist
 
 Don't proceed to [restrained hover](#restrained-hover) until every line
 below is genuinely checked, not assumed:
 
 - [ ] Both boards power on cleanly, no smell/heat concerns
 - [ ] `hw-autonomy` container running
-- [ ] Both serial device paths confirmed by enumeration, set in `.env`
+- [ ] Link 1 device path confirmed by enumeration, set in `.env`
 - [ ] `/fmu/*` topics present and updating (not stale)
-- [ ] MAVLink link connects; `set_localization_source --source gps` succeeds
+- [ ] Localization source confirmed correct (`EKF2_GPS_CTRL=7`/`EKF2_EV_CTRL=0` via QGC, or the MAVLink switch succeeds if you opted into it)
 - [ ] GPS 3D fix confirmed
 - [ ] `pre_flight_checks_pass: true`
 - [ ] Compass clean at the vehicle's actual assembled location
@@ -546,17 +639,17 @@ below is genuinely checked, not assumed:
 - [ ] RC-loss failsafe fires the configured action, tested
 - [ ] Every motor spins the correct direction (QGC motor test)
 - [ ] `make hw-flight-test` arms/offboards/disarms cleanly, props off
-- [ ] Real geofence limit derived and set in BOTH `hw_params.yaml` sections ([step 7](#geofence))
+- [ ] Real geofence limit derived and set in BOTH `hw_params.yaml` sections ([step 8](#geofence))
 
 <a id="restrained-hover"></a>
 
-## 9. Restrained hover test — props on
+## 10. Restrained hover test — props on
 
 Props on, vehicle physically restrained (tethered/held down/on a test
 stand rated for this) so it cannot actually leave the ground even at full
 commanded thrust. Confirm:
 - Motors spin up cleanly on arm, correct rotation directions (re-confirms
-  [step 8.7](#dry-run) under real arm/offboard control, not just QGC's
+  [step 9.7](#dry-run) under real arm/offboard control, not just QGC's
   motor test), no unusual vibration/noise.
 - `make hw-flight-test` again — verify the climb command produces
   correct, proportionate thrust response (motors clearly working harder
@@ -572,12 +665,12 @@ at least twice.
 
 <a id="first-hover"></a>
 
-## 10. First free hover
+## 11. First free hover
 
 Outdoor, open area, clear of obstacles and people, good GPS visibility,
 calm wind. Standard first-flight precautions apply and are not specific
 to this stack — RC transmitter in hand with a kill switch you've already
-tested working ([step 8.6](#dry-run)), a spotter if possible, and a plan
+tested working ([step 9.6](#dry-run)), a spotter if possible, and a plan
 for what "abort" means before you arm.
 
 ```bash
@@ -595,7 +688,7 @@ for why that's the whole design point), just with real physics.
 
 <a id="first-mission"></a>
 
-## 11. First GPS mission
+## 12. First GPS mission
 
 Once the hover test is clean and repeatable:
 
@@ -617,18 +710,24 @@ VIO code at all.
 
 <a id="troubleshooting"></a>
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
-- **DDS bridge shows no topics at all**: check the serial device/baud
-  from [the dry run](#dry-run) first — a wrong device path is the most
-  likely cause, matching sim's own equivalent gotcha
+- **DDS bridge shows no topics at all**: check the Link 1 device
+  path/baud from [the dry run](#dry-run) first — a wrong device path is
+  the most likely cause, matching sim's own equivalent gotcha
   ([Known Issues #5](known-issues.md#issue-5), though the exact failure
   mode there was container-restart-specific, not applicable here the
   same way).
-- **`set_localization_source` can't connect**: confirm the MAVLink link
-  from [step 3](#wiring) is wired and configured separately from the DDS
-  link, that TX/RX aren't swapped, and that its baud matches (115200
-  unless you've patched the code — see step 3).
+- **Mission behaves as if the wrong localization source is active**: you
+  forgot to re-check the live `EKF2_GPS_CTRL`/`EKF2_EV_CTRL` values in
+  QGroundControl before flying ([step 9.4](#dry-run)) — with the default
+  manual setup there's no software enforcing this matches
+  `LOCALIZATION=gps`, unlike the automated-switch path.
+- **`set_localization_source` can't connect** (only relevant if you
+  opted into `use_mavlink_switch:=true`): confirm the optional Link 2
+  from [step 3](#wiring) is wired and configured separately from Link 1,
+  that TX/RX aren't swapped, and that its baud matches (115200 unless
+  you've patched the code — see step 3).
 - **Arming denied, `Preflight Fail: ekf2 missing data`**: same as sim's
   documented normal EKF2-convergence wait
   ([Known Issues #8](known-issues.md#issue-8)) — but if it never clears,
@@ -638,7 +737,7 @@ VIO code at all.
   ([Known Issues #10](known-issues.md#issue-10)) — Docker layer caching
   means a rerun resumes rather than restarts. If `librealsense2` fails
   specifically and you want to unblock GPS-only testing now, see
-  [step 6](#build)'s note on temporarily disabling those layers.
+  [step 7](#build)'s note on temporarily disabling those layers.
 - **RC-loss/kill-switch test didn't do what you configured**: re-check
   `NAV_RCL_ACT`/`NAV_DLL_ACT` and your RC transmitter's own switch
   assignment in QGroundControl — do not proceed to a free flight until

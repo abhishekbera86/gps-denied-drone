@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 600" font-family="Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="1100" height="600" fill="#ffffff"/>
+
+  <text x="550" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#111111">
+    Pixhawk 6C &#8596; Orange Pi 5 Plus — Default Wiring (single connection)
+  </text>
+
+  <!-- Orange Pi 5 Plus box -->
+  <rect x="40" y="100" width="260" height="220" rx="10" fill="#fff4e6" stroke="#d9822b" stroke-width="2"/>
+  <text x="170" y="130" text-anchor="middle" font-size="17" font-weight="bold" fill="#7a3e00">Orange Pi 5 Plus</text>
+  <text x="170" y="150" text-anchor="middle" font-size="12" fill="#7a3e00">companion computer</text>
+  <text x="170" y="164" text-anchor="middle" font-size="12" fill="#7a3e00">(ARM64, Ubuntu 22.04)</text>
+
+  <rect x="70" y="184" width="200" height="34" rx="4" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"/>
+  <text x="170" y="206" text-anchor="middle" font-size="13" fill="#111111">USB port — Link 1</text>
+
+  <rect x="70" y="234" width="200" height="34" rx="4" fill="#f0f0f0" stroke="#999999" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="170" y="256" text-anchor="middle" font-size="12" fill="#666666">USB port — optional Link 2</text>
+
+  <text x="170" y="300" text-anchor="middle" font-size="11" fill="#7a3e00">Powered via 5V BEC from the</text>
+  <text x="170" y="314" text-anchor="middle" font-size="11" fill="#7a3e00">flight battery (size for real draw)</text>
+
+  <!-- Pixhawk 6C box -->
+  <rect x="800" y="100" width="260" height="220" rx="10" fill="#e7f0ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="930" y="130" text-anchor="middle" font-size="17" font-weight="bold" fill="#1a365d">Pixhawk 6C</text>
+  <text x="930" y="150" text-anchor="middle" font-size="12" fill="#1a365d">flight controller</text>
+  <text x="930" y="164" text-anchor="middle" font-size="12" fill="#1a365d">(PX4 v1.17.0)</text>
+
+  <rect x="830" y="184" width="200" height="34" rx="4" fill="#ffffff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="930" y="206" text-anchor="middle" font-size="13" fill="#111111">USB-C port</text>
+
+  <rect x="830" y="234" width="200" height="34" rx="4" fill="#f0f0f0" stroke="#999999" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="930" y="256" text-anchor="middle" font-size="12" fill="#666666">TELEM2 (6-pin JST-GH)</text>
+
+  <text x="930" y="296" text-anchor="middle" font-size="11" fill="#1a365d">GPS/compass module &#8594; GPS port</text>
+  <text x="930" y="310" text-anchor="middle" font-size="11" fill="#1a365d">ESCs/motors &#8594; MAIN OUT (not shown)</text>
+
+  <!-- Link 1: solid required connection -->
+  <line x1="300" y1="201" x2="800" y2="201" stroke="#1a7f37" stroke-width="3" marker-end="url(#arrowGreen)" marker-start="url(#arrowGreen)"/>
+  <text x="550" y="188" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a7f37">
+    USB cable — uXRCE-DDS (REQUIRED)
+  </text>
+  <text x="550" y="220" text-anchor="middle" font-size="11" fill="#1a7f37">
+    Carries arm / offboard / telemetry — everything except one-time parameter setup
+  </text>
+
+  <!-- Link 2: dashed optional connection -->
+  <line x1="300" y1="251" x2="800" y2="251" stroke="#999999" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrowGrey)" marker-start="url(#arrowGrey)"/>
+  <text x="550" y="270" text-anchor="middle" font-size="12" fill="#666666">
+    OPTIONAL: USB-to-TTL adapter — only if use_mavlink_switch:=true
+  </text>
+  <text x="550" y="286" text-anchor="middle" font-size="11" fill="#888888">
+    3.3V logic only — set any voltage-select jumper to 3.3V, never 5V
+  </text>
+
+  <!-- Legend / notes box -->
+  <rect x="40" y="360" width="1020" height="200" rx="8" fill="#f8f9fa" stroke="#cccccc" stroke-width="1"/>
+  <text x="60" y="386" font-size="14" font-weight="bold" fill="#111111">Default setup (recommended): ONE connection only</text>
+  <text x="60" y="410" font-size="12" fill="#333333">1. Connect the Pixhawk's USB-C port to any USB port on the Orange Pi with a standard USB data cable — this is Link 1.</text>
+  <text x="60" y="430" font-size="12" fill="#333333">2. Set EKF2_GPS_CTRL / EKF2_EV_CTRL (and, for vision, the lever arm + noise floor) ONCE via QGroundControl over that</text>
+  <text x="78" y="448" font-size="12" fill="#333333">same USB connection, before running any make hw-* commands — see "Configure localization source manually" below.</text>
+  <text x="60" y="470" font-size="12" fill="#333333">3. The dashed Link 2 (USB-to-TTL adapter to TELEM2) is only needed if you opt into use_mavlink_switch:=true, which</text>
+  <text x="78" y="488" font-size="12" fill="#333333">re-enables automatically switching PX4's fusion source at every launch instead of configuring it by hand once.</text>
+  <text x="60" y="516" font-size="11" fill="#777777">Pixhawk 6C TELEM2 pinout (6-pin JST-GH, 3.3V logic):</text>
+  <text x="60" y="534" font-size="11" fill="#777777">Pin 1=VCC(+5V, leave disconnected)  Pin 2=TX  Pin 3=RX  Pin 4=CTS  Pin 5=RTS  Pin 6=GND</text>
+
+  <defs>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a7f37"/>
+    </marker>
+    <marker id="arrowGrey" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#999999"/>
+    </marker>
+  </defs>
+</svg>
