@@ -152,6 +152,8 @@ exhaustive reference tables, and the complete bug/fix history — lives in
 | **[Technical Reference](resource/reference.md)** | Every `make` command, every ROS 2 topic and parameter this stack actually uses, every launch file, every environment variable — plus the full GPS/VIO localization-switching mechanism. |
 | **[Known Issues & Fixes](resource/known-issues.md)** | 37 real bugs, gotchas, and dead ends hit building and flying this stack, and exactly how (or whether) each was fixed. Read this before re-debugging something that's already been solved. |
 | **[Localization Source Design](resource/phase3-gps-denied-localization-source.md)** | The full design rationale and debugging history behind GPS/VIO switching — the *why* behind the Technical Reference's *how*. |
+| **[Hardware Bring-Up, Phase 1: GPS](resource/hardware-bringup-gps.md)** | Real Pixhawk 6C + Orange Pi 5 Plus setup, wiring, PX4 flashing/config, and a first GPS flight — **UNTESTED**, no hardware has run this yet. |
+| **[Hardware Bring-Up, Phase 2: VIO](resource/hardware-bringup-vio.md)** | Mounting the real D435i, Kalibr camera-IMU calibration, and a first indoor VIO flight — **UNTESTED**, builds on Phase 1. |
 
 ---
 
@@ -161,20 +163,24 @@ exhaustive reference tables, and the complete bug/fix history — lives in
 docker/
   Dockerfile.px4_sim              PX4 v1.17.0 SITL + Gazebo Harmonic (headless default, GUI opt-in)
   Dockerfile.ros2_autonomy        ROS 2 Humble + uXRCE-DDS agent + px4_msgs/px4_ros_com + OpenVINS
-  entrypoint_ros2_autonomy.sh     Auto-starts the Micro-XRCE-DDS-Agent at container boot
+  Dockerfile.hw_autonomy          ARM64: same + librealsense2/realsense-ros, no Gazebo (Phase 4, UNTESTED)
+  entrypoint_ros2_autonomy.sh     Auto-starts the Micro-XRCE-DDS-Agent at container boot (sim only)
   px4_sitl_overrides/             SITL-only PX4 param overrides (Known Issues #4)
   px4_sitl_worlds/                Overlay Gazebo worlds (empty.sdf, vio_test.sdf — Setup Guide)
   px4_sitl_models/                Overlay Gazebo model: this repo's own D435i camera (see below)
-docker-compose.yml                sim profile: px4-sim + ros2-autonomy (host networking)
+docker-compose.yml                sim profile: px4-sim + ros2-autonomy; hw profile: hw-autonomy (host networking)
 docker-compose.gui.yml            Opt-in overlay: X11/DRI passthrough for `make sim-gui`
 .env                              Version pins + runtime config (Technical Reference)
-Makefile                          build / sim / sim-gui / flight-test / mission / gz-resync / stop / shell
+Makefile                          sim targets (build/sim/flight-test/mission/...) + hw targets
+                                   (build-hw/hw-flight-test/hw-mission/...)
 resource/
   setup-guide.md                  Prerequisites + build/start walkthrough
   mission-testing.md              Flying and inspecting the stack
   reference.md                    Commands, topics, parameters, launch files, env vars
   known-issues.md                 37 real bugs and fixes hit during bring-up
   phase3-gps-denied-localization-source.md   Full VIO/localization-switch design + debugging history
+  hardware-bringup-gps.md         Phase 4 Phase 1: real GPS flight, step by step (UNTESTED)
+  hardware-bringup-vio.md         Phase 4 Phase 2: real VIO + calibration, step by step (UNTESTED)
 ros2_ws/src/
   common_control/                 OffboardControlNode — heartbeat/arm/offboard/
                                    takeoff/waypoints/hover/land state machine, including
@@ -182,13 +188,16 @@ ros2_ws/src/
   common_missions/                MissionBase + the square mission + the shared,
                                    transport-agnostic autonomy.launch.py (Phase 2 ✓)
   common_perception/               Localization-source switch (GPS/vision) + both VIO
-                                   backends (loopback stand-in, real OpenVINS) (Phase 3 ✓)
+                                   backends (loopback stand-in, real OpenVINS) (Phase 3 ✓) +
+                                   hw_vio.launch.py (Phase 4, UNTESTED) + hw calibration
+                                   templates (config/openvins/*_hw.yaml)
                                    + state_tf_publisher/viz.launch.py — RViz2 live TF/path
                                    view, sim/hw-agnostic
   sim_bringup/                    Sim-only launch + params (sim_params.yaml) — includes
                                    autonomy.launch.py, no flight logic of its own (Phase 2.5 ✓)
-  hw_bringup/                     Real-hardware bringup STUB — serial uXRCE-DDS agent +
-                                   hw_params.yaml; untested, no hardware yet (Phase 4 seam)
+  hw_bringup/                     Real-hardware bringup (Phase 4, UNTESTED) — serial uXRCE-DDS
+                                   agent + hw_params.yaml + real VIO wiring; no hardware has
+                                   run it yet — see resource/hardware-bringup-gps.md
 ```
 
 ---
@@ -256,7 +265,13 @@ This repo is under active development.
   incident history:
   [resource/phase3-gps-denied-localization-source.md](resource/phase3-gps-denied-localization-source.md).
 - **Phase 4**: same code on real hardware — Orange Pi 5 Plus + Pixhawk 6C +
-  RealSense D435i. Not started; `hw_bringup` remains an untested stub.
+  RealSense D435i. Infrastructure authored 2026-07-14 (`hw-autonomy` Docker
+  image, `hw_bringup`'s real VIO wiring, hardware calibration file
+  templates) but **not yet run on real hardware** — no flight has
+  confirmed any of it works. See
+  [Hardware Bring-Up, Phase 1: GPS](resource/hardware-bringup-gps.md) and
+  [Phase 2: VIO](resource/hardware-bringup-vio.md) for the step-by-step
+  path from here to an actual first flight.
 - **Phase 5**: SLAM + Nav2 navigation.
 
 Full phase-by-phase detail lives in `IMPLEMENTATION_PLAN.md` (local,
