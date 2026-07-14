@@ -109,6 +109,30 @@ simulated clock at all. See README §12 issue 29 for the full
 investigation and mitigation options (reduce `vio_test.sdf` prop count/
 camera resolution, ensure an idle host before testing, be patient rather
 than assuming a stall — this is slowness, not a hang).
+
+EKF2_NOAID_TOUT (vision only, added 2026-07-13, related to but DISTINCT
+from the RTF finding above): with `/dev/dri` fixed on master (README §12
+issue 31 — headless `px4-sim` now genuinely holds real_time_factor 1.0,
+not the ~0.02 it silently ran at before), the OpenVINS 1-second-sim-time
+gate above now only costs ~1 REAL second, not 44 — but that exposed a
+DIFFERENT, previously-masked tightness: PX4's default
+`EKF2_NOAID_TOUT` (5s) is the ENTIRE real-time budget for the whole
+vision pipeline to go from "GPS just switched off" to "first vision
+estimate PX4 actually accepts" — the MAVLink switch, spawning
+`parameter_bridge`/`run_subscribe_msckf`/`openvins_odometry_bridge` as
+real OS processes, DDS discovery, first camera frames, OpenVINS's own
+init, AND that init's 1-second gate above, all inside 5 real seconds.
+Confirmed live: a `square` mission's estimate went `xy_valid=false`
+within ~2s of reaching TAKEOFF (this file's own MAVLink switch to
+`vision` already consumes real time before the mission node even starts)
+— caught cleanly by the new estimate-health watchdog
+(`offboard_control_node.py`) rather than flying on a bad estimate, but
+the mission never got a real chance to fly. This project's
+`dev/camera-tilt` branch hit the identical mechanism and fixed it the
+same way: raise `EKF2_NOAID_TOUT` to PX4's own allowed maximum (10s) for
+vision mode only — GPS mode's default (5s) is untouched, since GPS's own
+aiding is already available at boot with no comparable pipeline-spinup
+latency.
 """
 
 import argparse
@@ -127,6 +151,11 @@ SOURCES = {
     'vision': {
         'EKF2_GPS_CTRL': 0,  # GPS fusion off — height falls back to baro
         'EKF2_EV_CTRL': 5,   # HPOS + VEL from vision; yaw stays on mag/gyro
+        # PX4's own allowed MAXIMUM (module.yaml: max: 10000000) — see
+        # this module's docstring's "EKF2_NOAID_TOUT" section for why the
+        # 5s default is too tight for the real-time vision-pipeline
+        # spin-up cost now that RTF is genuinely 1.0 on this host.
+        'EKF2_NOAID_TOUT': 10000000,
     },
 }
 

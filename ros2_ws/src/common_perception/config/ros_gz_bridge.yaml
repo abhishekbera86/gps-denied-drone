@@ -22,30 +22,42 @@
 # co-located with the color sensor, so sim now matches real hardware
 # end-to-end: same camera, same onboard IMU, same topic names.
 #
-# world name is "vio_test" (docker/px4_sitl_worlds/vio_test.sdf), NOT the
-# default "empty" world — confirmed live that empty's flat untextured ground
-# gives OpenVINS's feature tracker zero usable corners (initializer failed
-# every frame). vio_test adds a ring of colored static boxes; select it with
-# PX4_GZ_WORLD=vio_test / `make sim PX4_GZ_WORLD=vio_test` before flying with
-# VIO_BACKEND=openvins. The spawned model instance is "x500_depth_0" (PX4's
-# default first-instance suffix) — both are environment-specific; re-run
-# `gz topic -l` if either changes.
+# TEMPLATE, not a literal config — ros_gz_bridge's parameter_bridge loads
+# `config_file` as plain static YAML with no substitution support of its
+# own, so `__WORLD__`/`__MODEL__` below are placeholder tokens, not real
+# topic paths. `vio.launch.py`'s `_bridge_config_with_world` renders this
+# into a real YAML file at launch time (plain string substitution — no
+# templating engine needed for two tokens), filling in the `world`/`model`
+# launch arguments. `world` defaults to whatever `PX4_GZ_WORLD` was set to
+# for `make sim`/`make sim-gui` (wired through via docker-compose's
+# `ros2-autonomy.environment`) — the SAME env var that already selects
+# which Gazebo world actually runs, so there is exactly one place to set
+# this, not two that can silently disagree (see README §12 issue 35 for
+# what happened when the bridge's topic paths and the running world
+# didn't match: OpenVINS silently received zero data, forever). Must be
+# "vio_test" for VIO_BACKEND=openvins — confirmed live that the default
+# "empty" world's flat untextured ground gives OpenVINS's feature tracker
+# zero usable corners even when data IS flowing. `model` is PX4's spawned
+# instance name (its own first-instance suffix, "x500_depth_0" for a
+# single-vehicle sim regardless of which world is loaded) — re-run
+# `gz topic -l` and update the `model` launch argument's default if this
+# project ever spawns more than one vehicle.
 
-- gz_topic_name: "/world/vio_test/model/x500_depth_0/link/camera_link/sensor/color/image"
+- gz_topic_name: "/world/__WORLD__/model/__MODEL__/link/camera_link/sensor/color/image"
   ros_topic_name: "/camera/camera/color/image_raw"
   ros_type_name: "sensor_msgs/msg/Image"
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
   lazy: false
 
-- gz_topic_name: "/world/vio_test/model/x500_depth_0/link/camera_link/sensor/color/camera_info"
+- gz_topic_name: "/world/__WORLD__/model/__MODEL__/link/camera_link/sensor/color/camera_info"
   ros_topic_name: "/camera/camera/color/camera_info"
   ros_type_name: "sensor_msgs/msg/CameraInfo"
   gz_type_name: "gz.msgs.CameraInfo"
   direction: GZ_TO_ROS
   lazy: false
 
-- gz_topic_name: "/world/vio_test/model/x500_depth_0/link/camera_link/sensor/imu/imu"
+- gz_topic_name: "/world/__WORLD__/model/__MODEL__/link/camera_link/sensor/imu/imu"
   ros_topic_name: "/camera/camera/imu"
   ros_type_name: "sensor_msgs/msg/Imu"
   gz_type_name: "gz.msgs.IMU"

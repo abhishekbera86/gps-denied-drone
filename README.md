@@ -836,7 +836,7 @@ value** — see §12 issue 12.
 | `PX4_ROS_COM_BRANCH` | `release/1.16` | `px4_ros_com` branch built into `ros2-autonomy`. |
 | `ROS_DISTRO` | `humble` | ROS 2 distribution. |
 | `PX4_GZ_MODEL` | `x500_depth` | Gazebo vehicle model (x500 quad + simulated D435i — `docker/px4_sitl_models/d435i`, §11). |
-| `PX4_GZ_WORLD` | *(deliberately unset — see below)* | Gazebo world by name: `empty` (default, bare ground) or `vio_test` (required for `VIO_BACKEND=openvins`, §4.3/§8); any world PX4 bundles also works (`default`, `walls`, `baylands`, …). **Set this on the command line only** (`PX4_GZ_WORLD=vio_test make sim-gui`) — **do not add a `PX4_GZ_WORLD=...` line to `.env`**, it will silently defeat the command-line override (§12 issue 19), which is exactly why this row has no default value here. |
+| `PX4_GZ_WORLD` | *(deliberately unset — see below)* | Gazebo world by name: `empty` (default, bare ground) or `vio_test` (required for `VIO_BACKEND=openvins`, §4.3/§8); any world PX4 bundles also works (`default`, `walls`, `baylands`, …) — including for the camera/IMU bridge, which templates its Gazebo topic paths from this SAME variable rather than hardcoding one world (§12 issue 36), so a new VIO-capable world needs no YAML edits, just this value. **Set this on the command line only** (`PX4_GZ_WORLD=vio_test make sim-gui`) — **do not add a `PX4_GZ_WORLD=...` line to `.env`**, it will silently defeat the command-line override (§12 issue 19), which is exactly why this row has no default value here. |
 | `PX4_HEADLESS` | `1` | `1` = headless server-only Gazebo. Don't hand-edit this for GUI mode — use `make sim-gui`, which sets it via a compose overlay. |
 | `UXRCE_DDS_PORT` | `8888` | Micro-XRCE-DDS-Agent UDP port (PX4 ↔ ROS 2 bridge). |
 | `RMW_IMPLEMENTATION` | `rmw_cyclonedds_cpp` | ROS 2 middleware implementation. |
@@ -1579,6 +1579,176 @@ silently misbehaving, but still a real oversight, now fixed.
   during-land check fired on the very next control tick and
   force-disarmed — a clean, geofence-free demonstration of this fix
   specifically, not just the two working together.
+
+**35. `VIO_BACKEND=openvins` silently starved of all camera/IMU data when
+`PX4_GZ_WORLD=vio_test` is forgotten — looked like "stuck waiting for
+arm/offboard forever," root cause was one launch-time env var
+(2026-07-14).** User report: `square_mission` logs showed
+`nav_state=14`/`arming_state=1` (offboard engaged, never armed) repeating
+`Arm command sent` / `Waiting for offboard+armed` indefinitely. Live
+repro found TWO symptom variants of the identical root cause, both
+reproduced this session: sometimes PX4 arms almost instantly on
+residual pre-switch EKF2 state and then issue 34's estimate-health
+watchdog aborts-to-LAND ~4s into the flight; other times arming itself
+never succeeds. Which variant appears is just timing (how much stale
+GPS-based validity EKF2 has left at the exact instant `set_
+localization_source` flips `EKF2_GPS_CTRL`/`EKF2_EV_CTRL`) — not two
+different bugs.
+
+**Actual root cause**: `ros_gz_bridge`'s config
+(`config/ros_gz_bridge.yaml`) subscribes to Gazebo topics under
+`/world/vio_test/model/x500_depth_0/...` — these only exist when the sim
+was started with `PX4_GZ_WORLD=vio_test` (§4.3/§8). `make sim`/`make
+sim-gui` default to `PX4_GZ_WORLD=empty` (documented, and correct for
+GPS-mode flights — no reason to pay `vio_test`'s extra prop/tile
+rendering cost when not testing vision). Start the sim on `empty` and
+then fly `VIO_BACKEND=openvins` anyway, and `camera_imu_bridge` still
+starts cleanly and creates all the right ROS topics — they just never
+receive a single message, because Gazebo is publishing under
+`/world/empty/...` instead. OpenVINS then sits forever with zero camera/
+IMU input, logs nothing (confirmed live: zero log lines from
+`run_subscribe_msckf` for the whole flight), and the position estimate
+never becomes valid. Nothing upstream can catch this: `set_
+localization_source` only talks to PX4 over MAVLink and has no
+visibility into Gazebo's topic tree; `offboard_control_node` retrying
+arm/offboard once a second forever is *correct* behavior for the normal
+30-60s EKF2-convergence case (issue 8) — from the mission log alone,
+"no vision data will ever arrive" is indistinguishable from "still
+converging, give it time."
+
+**Fix — fail LOUD instead of silently hanging**: `vio.launch.py` gained
+a fourth concurrent action, `camera_data_check` — waits up to 8s for one
+message on `/camera/camera/imu` (`timeout 8 ros2 topic echo ...
+--once`) and, if none arrives, logs an unmissable `[camera_data_check]
+ERROR` naming the exact cause and the fix (`PX4_GZ_WORLD=vio_test make
+sim`). Deliberately doesn't gate or delay the other three actions (VIO
+still starts immediately as before) — it only adds a bounded,
+actionable diagnostic where previously there was none. **Verified live
+both ways**: reran the identical mission twice back to back, same
+sim session, only `PX4_GZ_WORLD` changed — `vio_test` flew clean (armed,
+climbed, all 5 waypoints, landed, issue 21's post-landing fallback
+disarm handled the still-open post-landing-drift gap as designed);
+`empty` reproduced the original hang/early-abort *and* printed the new
+`camera_data_check` error within 8s pointing straight at the fix.
+
+**Separately noticed, not yet root-caused, does not block flights**:
+`run_subscribe_msckf` (OpenVINS's own process) exits with SIGSEGV
+(code -11) on every run observed this session — but only during the
+launch's own SIGINT/shutdown sequence, after the mission has already
+landed or force-disarmed. Looks like a crash in OpenVINS's own cleanup
+path, not a flight-time issue — flagged here so a future session
+doesn't mistake it for a new regression, but not chased down; it never
+appeared to affect an in-progress flight.
+
+**Also note**: `set_localization_source.py` on disk already carries an
+`EKF2_NOAID_TOUT` change (vision mode only, PX4's own max of 10s instead
+of the 5s default) from earlier the same day, addressing a related but
+distinct real-time-budget squeeze once RTF is genuinely 1.0 (see the
+module's own docstring). That change is independent of this issue —
+confirmed present and applied (`EKF2_NOAID_TOUT = 10000000 (confirmed)`
+in the MAVLink switch log) in every repro run this session, vision-data
+starvation just meant it never got a chance to matter.
+
+**36. Follow-up to issue 35: `vio_test` was still hardcoded into
+`ros_gz_bridge.yaml`'s topic paths — fixed properly instead of just
+patched around (2026-07-14, same day).** Issue 35's fix made a wrong
+`PX4_GZ_WORLD` fail loudly, but didn't address the actual bad practice
+the user flagged after reading the diff: the bridge's Gazebo-side topic
+paths (`/world/vio_test/model/x500_depth_0/...`) were still a literal
+hardcoded string, meaning any future second VIO-capable world would need
+a hand-edited YAML, not just a different `PX4_GZ_WORLD` value — the
+exact kind of hardcoding that caused issue 35 in the first place, just
+not yet triggered a second way.
+
+**Fix**: `config/ros_gz_bridge.yaml` is now a TEMPLATE
+(`__WORLD__`/`__MODEL__` placeholder tokens, not literal paths).
+`vio.launch.py` gained `world`/`model` launch arguments — `world`
+defaults to the `PX4_GZ_WORLD` environment variable (wired into the
+`ros2-autonomy` container via `docker-compose.yml`, which previously
+only passed it to `px4-sim`) — and a new `_bridge_config_with_world`
+function renders the template with the resolved values into a temp file
+before `parameter_bridge` starts (plain string substitution — no
+templating engine needed for two tokens; `parameter_bridge`'s
+`config_file` param is loaded as static YAML with no substitution
+support of its own). Net effect: `PX4_GZ_WORLD=<any-world> make sim`
+now "just works" for the bridge automatically, with exactly one place to
+set the world — not the config file AND the command line, which could
+silently disagree.
+
+**A real gap in issue 35's own guard was found and fixed while verifying
+this.** The original `camera_data_check` watched `/camera/camera/imu` —
+reasonable when the bug was "topics don't exist at all," but a live
+regression test after this fix exposed why that was the wrong signal in
+general: once the bridge always matches the running world, IMU data
+flows on ANY world, including `empty` — an IMU is a physics sensor,
+indifferent to ground texture. So the guard would have silently gone
+blind to the *other* already-documented openvins requirement (issue 8's
+sibling note: `empty`'s flat untextured ground gives OpenVINS's feature
+tracker zero usable corners even with real data flowing) the moment
+issue 35's original bug was fixed — replacing one silent failure mode
+with a different, newly-silent one. Renamed to `vio_output_check` and
+repointed at OpenVINS's own output (`/ov_msckf/odomimu`, 15s timeout —
+longer than the 8s before, since this now has to tolerate a legitimately
+slower-but-fine static init rather than just detect zero-vs-nonzero
+input) — checking the output catches both causes (wrong world, or a
+world with data but not enough texture) with one mechanism, since both
+end in the same observable fact: no valid estimate ever comes out.
+
+**Verified live, three ways, same sim session**: `vio_test` with the new
+template rendering → full mission (armed, climbed, all 5 waypoints,
+landed) with the correctly-rendered `/world/vio_test/model/
+x500_depth_0/...` paths confirmed in the bridge's own startup log.
+`empty` with the OLD `/camera/camera/imu`-based check → check passed
+cleanly (proving the blind-spot theory: IMU data really does flow fine
+on `empty`) while the mission still failed the same way as issue 35
+(`POSITION ESTIMATE INVALID`, force-disarm) — this is what caught the
+gap. `empty` again after switching to the `/ov_msckf/odomimu`-based
+check → guard now correctly fires within 15s, naming both possible
+causes. Re-verified `vio_test` a final time against the corrected check
+to confirm no false-positive on the good path.
+
+**37. `run_subscribe_msckf` (OpenVINS's own process) segfaults on every
+shutdown — root-caused to upstream `rclcpp`, confirmed benign
+(2026-07-14).** Flagged as an open question in issues 35/36 (`exit code
+-11` on every run, only during the launch's own SIGINT teardown). User
+asked for an actual analysis rather than leaving it as a shrug. Read
+OpenVINS's own source (`/opt/openvins_ws/src/open_vins/ov_msckf/src/
+run_subscribe_msckf.cpp` inside the container — vendored upstream
+`rpng/open_vins`, not code in this repo): `main()` runs an
+`rclcpp::executors::MultiThreadedExecutor` (spins OpenVINS's camera/IMU
+callbacks across several worker threads), and the instant `spin()`
+returns (triggered by SIGINT), immediately calls `viz->
+visualize_final()` — which reads the shared `VioManager`/
+`ROS2Visualizer` state (camera intrinsics, timeoffset, extrinsics) — and
+then `rclcpp::shutdown()`. This is a known, still-open category of
+`rclcpp` fragility: `MultiThreadedExecutor::spin()` returning on the
+calling thread does not always mean every worker thread it spawned has
+actually finished touching node state first, so a callback still
+in-flight on another thread can race the main thread's post-spin
+teardown — a classic concurrent-access crash shape, not unique to
+OpenVINS (see e.g. upstream `ros2/rclcpp`/`ros2/launch` issues on
+SIGINT-vs-executor-thread races).
+
+**Confirmed against the user's own crash log, not just theory**: the
+two lines immediately preceding every crash —
+```
+camera-imu timeoffset = 0.01667
+cam0 intrinsics = 465.922,466.035,320.933,179.928 | 0.001,0.000,0.004,0.002
+```
+are `visualize_final()`'s own `PRINT_INFO` output, character-for-character
+matching its source. The crash happens during or immediately after this
+exact function, exactly where the race theory predicts.
+
+**Verdict: benign, upstream, not worth patching.** Confirmed across
+every reproduction this project has hit it (7+ runs, one session) that
+it ONLY happens after `Landed and disarmed — mission complete` — never
+mid-flight, never before disarm. The fragility is in `rclcpp`'s own
+executor/signal-handling internals (an area ROS 2's own maintainers have
+open, unresolved issues about), not something a few lines of local
+patching to vendored third-party source would reliably fix — and this
+project doesn't fork/patch upstream repos by policy. No action taken;
+documented so no future session re-investigates this from scratch or
+mistakes it for a new regression.
 
 ---
 

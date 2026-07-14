@@ -97,6 +97,13 @@ services:
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
       UXRCE_DDS_PORT: "${UXRCE_DDS_PORT:-8888}"
       DRONE_NAMESPACE: "${DRONE_NAMESPACE:-drone1}"
+      # Read by vio.launch.py's `world` launch argument default, so the
+      # camera/IMU bridge always points at whichever Gazebo world px4-sim
+      # actually started with — one env var, not two that can disagree
+      # (README §12 issue 35). Same "${...:-empty}" default as px4-sim's
+      # own PX4_GZ_WORLD above, for the same reason documented at README
+      # §12 issue 19 (never hardcode this in .env instead).
+      PX4_GZ_WORLD: "${PX4_GZ_WORLD:-empty}"
     volumes:
       - ./ros2_ws:/ros2_ws:rw
       - colcon_build_cache:/ros2_ws_build
