@@ -540,13 +540,15 @@ PIXHAWK_BAUD_RATE=921600
 ```
 
 **Then recreate the container** — this step is not optional.
-`docker-compose.yml`'s device mapping for `hw-autonomy` is resolved from
-`.env` once, at container *creation* time; editing `.env` afterward does
-not update a container that's already running. If `hw-autonomy` was
+`docker-compose.yml`'s device mapping AND the `PIXHAWK_SERIAL_PORT`/
+`PIXHAWK_BAUD_RATE` environment variables `hw-autonomy` uses to
+auto-start its DDS agent (see [step 9.3](#dry-run)) are both resolved
+from `.env` once, at container *creation* time; editing `.env` afterward
+does not update a container that's already running. If `hw-autonomy` was
 started (`docker compose --profile hw up -d`) before you knew the
 correct port, it currently has the wrong device (or no device at all)
-mapped through, and every command below will fail on that basis, not on
-anything else:
+mapped through and the agent likely failed to start at boot — every
+command below will fail on that basis, not on anything else:
 
 ```bash
 docker compose --profile hw up -d
@@ -561,29 +563,29 @@ established pattern for runtime-vs-build-time config — see
 [Known Issues #19](known-issues.md#issue-19) for why a value like this
 belongs on the command line, not hardcoded into `.env`.)
 
-### 9.3 Start the DDS bridge and confirm it carries real data
+### 9.3 Confirm the DDS link carries real data
 
-**Unlike sim, nothing starts the uXRCE-DDS agent automatically here.**
-`ros2-autonomy`'s container entrypoint auto-starts one for sim's UDP
-link; `hw-autonomy` deliberately does not — the serial agent is normally
-started by `hw.launch.py` itself, tied to a mission's own launch
-lifecycle (see that file's own comments). For this dry run, start one by
-hand instead, so you can inspect live PX4 state before ever running an
-actual mission. Open a terminal and **leave this running for the rest of
-the dry run, through step 9.7** — stop it only right before step 9.8,
-which starts its own copy as part of the real launch and cannot share
-the serial device with a second agent instance:
+The uXRCE-DDS agent auto-starts at `hw-autonomy` container boot
+(`entrypoint_hw_autonomy.sh`, reading the `.env` values from
+[step 9.2](#dry-run)) — same pattern sim's `ros2-autonomy` already uses
+for its own UDP agent, and, deliberately, NOT tied to any mission launch:
+you should be able to inspect live PX4 state at any time, independent of
+ever running a mission. Confirm it actually came up:
 
 ```bash
 make shell-hw
-MicroXRCEAgent serial --dev /dev/ttyACM0 -b 921600   # your confirmed device from 9.2
+cat /var/log/microxrce_agent.log
 ```
+Should show `Session established` (or similar) once the agent and PX4's
+own uXRCE-DDS client have found each other — if instead you see a
+`WARNING: ... not found at container start` message, the device wasn't
+present/correct when the container booted; recheck [step 9.2](#dry-run)
+(did you recreate the container *after* confirming the device and
+editing `.env`, in that order?) and recreate again once it's right.
 
-In a SECOND terminal, open another shell into the same running container
-— use this one for every other command in this dry run (9.4 through 9.7):
+Then confirm actual data is flowing:
 
 ```bash
-docker exec -it hw-autonomy bash
 source /opt/ros/humble/setup.bash
 source /opt/px4_ros2_ws/install/setup.bash
 ros2 topic list | grep fmu
@@ -591,13 +593,11 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 ```
 
 You should see the full `/fmu/in/*`/`/fmu/out/*` topic set, same as sim
-([Reference §6](reference.md#sec-6)) — if you see nothing, first
-double-check the agent terminal is actually still running and didn't
-error out, then recheck [step 9.2](#dry-run) (device path, and whether
-you recreated the container after editing `.env`) before assuming
-anything more complicated is wrong. This is the single most likely place
-for this bring-up's first real bug to show up — treat "topics exist but
-look stale/frozen" as a failure too, not just "topics missing entirely."
+([Reference §6](reference.md#sec-6)). This is the single most likely
+place for this bring-up's first real bug to show up — treat "topics
+exist but look stale/frozen" as a failure too, not just "topics missing
+entirely." This bridge stays up for as long as the container runs — no
+need to start or stop anything for the rest of this dry run.
 
 ### 9.4 Confirm the localization source is configured correctly
 
@@ -609,7 +609,7 @@ continuing — an unnoticed leftover vision-mode config from an earlier
 test is exactly the kind of thing a dry run exists to catch.
 
 **If you opted into `use_mavlink_switch:=true`** (optional Link 2
-wired): confirm that link instead, in your second terminal from
+wired): confirm that link instead, in the same shell from
 [step 9.3](#dry-run) — this one needs the actual workspace sourced too,
 not just the two setup files above, since `common_perception` lives
 there:
@@ -674,12 +674,10 @@ for its position before continuing.
 
 ### 9.8 This repo's own arm/offboard/land cycle
 
-**First, stop the `MicroXRCEAgent` you started by hand in
-[step 9.3](#dry-run)** (`Ctrl-C` in that terminal). `make hw-flight-test`
-starts its own copy as part of `hw.launch.py`'s launch graph — two agent
-processes can't both hold the same serial device at once, and the
-mission's own launch will fail (or steal the device out from under your
-manual one) if you leave it running.
+No need to start or stop anything extra here — the DDS bridge from
+[step 9.3](#dry-run) is already up (container-level, not tied to any
+particular launch) and `hw.launch.py` no longer starts a competing agent
+of its own.
 
 ```bash
 make hw-flight-test

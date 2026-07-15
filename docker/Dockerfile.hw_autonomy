@@ -186,10 +186,18 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
-# No entrypoint script — unlike sim's ros2-autonomy, nothing here needs to
-# auto-start a DDS agent at container boot: hw.launch.py starts
-# `MicroXRCEAgent serial ...` itself as part of the mission's own launch
-# graph (see that file), so its lifecycle is tied to the mission the same
-# way every other node here is, not a separate always-on background process.
+# Auto-starts the Micro-XRCE-DDS-Agent at container boot — same reasoning
+# and pattern as sim's ros2-autonomy (entrypoint_ros2_autonomy.sh). An
+# earlier version of this Dockerfile deliberately did NOT do this, tying
+# the agent's lifecycle to hw.launch.py's own mission launch instead —
+# confirmed live during actual hardware bring-up to be a real mistake: it
+# meant `/fmu/*` topics weren't available to verify during dry-run bench
+# testing (the exact moment that verification matters most) without
+# starting an agent by hand first. See entrypoint_hw_autonomy.sh's own
+# header for the full reasoning.
+COPY docker/entrypoint_hw_autonomy.sh /usr/local/bin/entrypoint_hw_autonomy.sh
+RUN chmod +x /usr/local/bin/entrypoint_hw_autonomy.sh
+
 WORKDIR /ros2_ws
+ENTRYPOINT ["/usr/local/bin/entrypoint_hw_autonomy.sh"]
 CMD ["tail", "-f", "/dev/null"]

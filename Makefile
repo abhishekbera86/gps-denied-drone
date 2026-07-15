@@ -241,7 +241,6 @@ hw-flight-test:
 		source /opt/openvins_ws/install/setup.bash && \
 		source /ros2_ws_build/install/setup.bash && \
 		ros2 launch hw_bringup hw.launch.py action:=hover \
-			serial_device:=$(PIXHAWK_SERIAL_PORT) baud:=$(PIXHAWK_BAUD_RATE) \
 			localization_source:=$(LOCALIZATION) use_mavlink_switch:=$(USE_MAVLINK_SWITCH) \
 			mavlink_url:=$(MAVLINK_URL) \
 			ev_pos_x:=$(EV_POS_X) ev_pos_y:=$(EV_POS_Y) ev_pos_z:=$(EV_POS_Z)"
@@ -256,7 +255,6 @@ hw-mission:
 		source /opt/openvins_ws/install/setup.bash && \
 		source /ros2_ws_build/install/setup.bash && \
 		ros2 launch hw_bringup hw.launch.py action:=mission mission:=$(MISSION) \
-			serial_device:=$(PIXHAWK_SERIAL_PORT) baud:=$(PIXHAWK_BAUD_RATE) \
 			localization_source:=$(LOCALIZATION) use_mavlink_switch:=$(USE_MAVLINK_SWITCH) \
 			mavlink_url:=$(MAVLINK_URL) \
 			ev_pos_x:=$(EV_POS_X) ev_pos_y:=$(EV_POS_Y) ev_pos_z:=$(EV_POS_Z)"

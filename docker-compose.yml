@@ -149,6 +149,12 @@ services:
     environment:
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
       DRONE_NAMESPACE: "${DRONE_NAMESPACE:-drone1}"
+      # Read by entrypoint_hw_autonomy.sh to auto-start the DDS agent at
+      # container boot (mirrors ros2-autonomy's own UDP equivalent) — must
+      # match the `devices:` mapping below, which is why both derive from
+      # the SAME .env values rather than being set independently.
+      PIXHAWK_SERIAL_PORT: "${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}"
+      PIXHAWK_BAUD_RATE: "${PIXHAWK_BAUD_RATE:-921600}"
     devices:
       - "${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}:${PIXHAWK_SERIAL_PORT:-/dev/ttyUSB0}"
     volumes:

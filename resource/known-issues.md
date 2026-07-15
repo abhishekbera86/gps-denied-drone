@@ -46,6 +46,7 @@ root-caused and confirmed benign rather than patched, and say so explicitly.
 35. [`VIO_BACKEND=openvins` silently starved of all camera/IMU data when `PX4_GZ_WORLD=vio_test` is fo...](#issue-35)
 36. [Follow-up to issue 35: `vio_test` was still hardcoded into `ros_gz_bridge.yaml`'s topic paths — f...](#issue-36)
 37. [`run_subscribe_msckf` (OpenVINS's own process) segfaults on every shutdown — root-caused to upstr...](#issue-37)
+38. [`hw-autonomy`'s DDS agent was tied to the mission launch instead of the container, unlike sim — made hardware dry-run bench testing needlessly blind](#issue-38)
 
 ---
 
@@ -1001,6 +1002,60 @@ patching to vendored third-party source would reliably fix — and this
 project doesn't fork/patch upstream repos by policy. No action taken;
 documented so no future session re-investigates this from scratch or
 mistakes it for a new regression.
+
+<a id="issue-38"></a>
+
+**38. `hw-autonomy`'s uXRCE-DDS agent was tied to the mission launch
+instead of the container, unlike sim — made hardware dry-run bench
+testing needlessly blind (2026-07-15).** When `hw_bringup`/`hw-autonomy`
+were first built (issue 35's part of the work), the DDS agent was
+deliberately started inside `hw.launch.py` itself, as an `ExecuteProcess`
+alongside the mission node — the reasoning at the time: the agent needs
+`.env`'s `PIXHAWK_SERIAL_PORT`/`PIXHAWK_BAUD_RATE` to already be correct,
+so tie its lifecycle to the same launch that already consumes those
+values, same as every other node here. This is the opposite of sim's own
+design (`ros2-autonomy`'s container entrypoint auto-starts its UDP agent
+at container boot, fully independent of any mission).
+
+**Confirmed live, during actual hardware bring-up, to be a real
+mistake, not a defensible tradeoff.** This project's whole hardware
+bring-up guide (`resource/hardware-bringup-gps.md`) is built around a
+"verify everything with props off, BEFORE ever running a mission"
+philosophy — but with the agent tied to `hw.launch.py`, `/fmu/*` topics
+were only available *inside* a mission launch, meaning the dry run's own
+topic/sensor-health checks (§9.3-9.7) couldn't work without either
+starting an agent by hand first (a real, live point of confusion — see
+the guide's own git history) or running an actual mission just to get
+telemetry, defeating the entire point of a dry run. The one place this
+project most needs pre-flight visibility turned out to be the one place
+that didn't have it.
+
+**Fixed by matching sim's own pattern exactly**: a new
+`docker/entrypoint_hw_autonomy.sh` (mirroring
+`entrypoint_ros2_autonomy.sh`) auto-starts `MicroXRCEAgent serial` at
+`hw-autonomy` container boot, reading `PIXHAWK_SERIAL_PORT`/
+`PIXHAWK_BAUD_RATE` from the container's own environment (now passed
+through in `docker-compose.yml`, which previously only used those values
+to build the `devices:` mapping, not as actual env vars available
+inside the container). Unlike sim's UDP case (always "available," no
+physical device to wait for), a real serial device may genuinely not
+exist yet at container boot — the entrypoint warns and continues rather
+than failing the whole container, since that's a normal, recoverable
+state (plug in the Pixhawk, recreate the container) not an error.
+`hw.launch.py`'s own agent-starting `ExecuteProcess` and its now-dead
+`serial_device`/`baud` launch arguments were removed — a second agent
+instance can't share the same serial device with the entrypoint's
+already-running one, so keeping both would have just traded one bug for
+a conflict.
+
+**Also caught and fixed while verifying the fix**: `hw_params.yaml`'s
+`px4-commander disarm -f` fallback instruction in the dry-run guide
+doesn't exist on real hardware at all — that's a SITL-only shell command
+that runs inside PX4's own simulated console in the `px4-sim` container;
+there's no equivalent local console for a real Pixhawk, since PX4 runs
+on the physical board, not as a process in this container. Replaced with
+the RC kill switch / QGroundControl's own disarm button, both already
+covered elsewhere in the same section.
 
 ---
 

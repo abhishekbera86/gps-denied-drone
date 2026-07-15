@@ -6,10 +6,16 @@ here on a free-flying vehicle).
 Mirror of sim_bringup/sim.launch.py for a real Pixhawk 6C + Orange Pi 5 Plus.
 The autonomy include is identical to sim — the only differences live here in
 the bringup layer:
-  * DDS transport: a uXRCE-DDS agent over SERIAL to the Pixhawk (sim uses UDP,
-    started by the ros2-autonomy container entrypoint). This is the ONE
-    connection this launch file always needs — see resource/
-    hardware-bringup-gps.md's wiring section.
+  * DDS transport: a uXRCE-DDS agent over SERIAL to the Pixhawk (sim uses
+    UDP). This launch file does NOT start that agent itself — unlike an
+    earlier version, which tied its lifecycle to this file (a real mistake,
+    found live: it meant `/fmu/*` topics weren't verifiable during dry-run
+    bench testing without starting an agent by hand first). It's now
+    auto-started at `hw-autonomy` container BOOT instead, by
+    `entrypoint_hw_autonomy.sh` — the exact same pattern sim's
+    `ros2-autonomy` already uses for its own UDP agent. By the time this
+    launch file runs, the bridge should already be up; see resource/
+    hardware-bringup-gps.md's wiring/dry-run sections.
   * Sensor source (Phase 3/4): when localization_source:=vision, includes
     common_perception/launch/hw_vio.launch.py — realsense-ros + OpenVINS
     against the real D435i (in sim this is ros_gz_bridge + OpenVINS against
@@ -34,11 +40,11 @@ behavior instead.
 
 Example (on the real companion computer, single-connection default):
   ros2 launch hw_bringup hw.launch.py action:=mission mission:=square \
-      serial_device:=/dev/ttyACM0 localization_source:=vision
+      localization_source:=vision
 
 Example (opting into the automated MAVLink switch, needs Link 2 wired):
   ros2 launch hw_bringup hw.launch.py action:=mission mission:=square \
-      serial_device:=/dev/ttyACM0 localization_source:=vision \
+      localization_source:=vision \
       use_mavlink_switch:=true mavlink_url:=/dev/ttyUSB1
 """
 
@@ -130,12 +136,14 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # Pixhawk 6C serial link (the ONE connection the default setup
-        # needs). Defaults match the .env HW pins; override on the real
-        # machine per resource/hardware-bringup-gps.md (verify with
-        # `ls /dev/tty*` / `dmesg` — do not assume ttyUSB0 vs ttyACM0).
-        DeclareLaunchArgument('serial_device', default_value='/dev/ttyUSB0'),
-        DeclareLaunchArgument('baud', default_value='921600'),
+        # No serial_device/baud launch arguments here anymore — the ONE
+        # connection this setup needs (the DDS agent) is now started at
+        # container boot by entrypoint_hw_autonomy.sh, reading
+        # PIXHAWK_SERIAL_PORT/PIXHAWK_BAUD_RATE directly from the
+        # container's own environment (set from .env via docker-compose.yml,
+        # per resource/hardware-bringup-gps.md's wiring/dry-run sections) —
+        # not from launch arguments, since the agent is already running
+        # before this launch file ever starts.
         DeclareLaunchArgument('action', default_value='mission'),
         DeclareLaunchArgument('mission', default_value='square'),
         DeclareLaunchArgument(
@@ -166,14 +174,6 @@ def generate_launch_description():
         DeclareLaunchArgument('ev_pos_x', default_value='0.0'),
         DeclareLaunchArgument('ev_pos_y', default_value='0.0'),
         DeclareLaunchArgument('ev_pos_z', default_value='0.0'),
-
-        # uXRCE-DDS agent over serial (the real-HW analog of the sim's UDP
-        # agent). This is the ONE connection every path here needs.
-        ExecuteProcess(
-            cmd=['MicroXRCEAgent', 'serial', '--dev',
-                 LaunchConfiguration('serial_device'), '-b', LaunchConfiguration('baud')],
-            output='screen',
-        ),
 
         switch_process,
         RegisterEventHandler(
