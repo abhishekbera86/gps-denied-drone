@@ -528,14 +528,31 @@ If you're using only Link 1 (the default), you should see one new device
 appear when you plug the Pixhawk's USB cable in. If you've also wired the
 optional Link 2, plug each in one at a time and re-run `ls /dev/tty*`
 between each — the most reliable way to know which device node is which,
-rather than guessing from naming convention alone. Once confirmed, set
-Link 1 in `.env`:
+rather than guessing from naming convention alone. Once confirmed, edit
+`.env` **directly, as a file** — typing `PIXHAWK_SERIAL_PORT=/dev/ttyACM0`
+at your shell prompt only sets a variable in that one shell session, it
+does not persist anywhere or reach the container:
 
 ```bash
-# .env
+# .env — edit the actual file, e.g. `nano .env`
 PIXHAWK_SERIAL_PORT=/dev/ttyACM0   # whatever you actually confirmed above
 PIXHAWK_BAUD_RATE=921600
 ```
+
+**Then recreate the container** — this step is not optional.
+`docker-compose.yml`'s device mapping for `hw-autonomy` is resolved from
+`.env` once, at container *creation* time; editing `.env` afterward does
+not update a container that's already running. If `hw-autonomy` was
+started (`docker compose --profile hw up -d`) before you knew the
+correct port, it currently has the wrong device (or no device at all)
+mapped through, and every command below will fail on that basis, not on
+anything else:
+
+```bash
+docker compose --profile hw up -d
+```
+(idempotent — compose detects the `.env`-driven config changed and
+recreates just this container; safe to run any time you change `.env`.)
 
 (If you're using optional Link 2, there's no `.env` entry for it — it's a
 per-invocation choice like `LOCALIZATION=`/`MISSION=`, passed as
@@ -544,10 +561,29 @@ established pattern for runtime-vs-build-time config — see
 [Known Issues #19](known-issues.md#issue-19) for why a value like this
 belongs on the command line, not hardcoded into `.env`.)
 
-### 9.3 Confirm the DDS link carries real data
+### 9.3 Start the DDS bridge and confirm it carries real data
+
+**Unlike sim, nothing starts the uXRCE-DDS agent automatically here.**
+`ros2-autonomy`'s container entrypoint auto-starts one for sim's UDP
+link; `hw-autonomy` deliberately does not — the serial agent is normally
+started by `hw.launch.py` itself, tied to a mission's own launch
+lifecycle (see that file's own comments). For this dry run, start one by
+hand instead, so you can inspect live PX4 state before ever running an
+actual mission. Open a terminal and **leave this running for the rest of
+the dry run, through step 9.7** — stop it only right before step 9.8,
+which starts its own copy as part of the real launch and cannot share
+the serial device with a second agent instance:
 
 ```bash
 make shell-hw
+MicroXRCEAgent serial --dev /dev/ttyACM0 -b 921600   # your confirmed device from 9.2
+```
+
+In a SECOND terminal, open another shell into the same running container
+— use this one for every other command in this dry run (9.4 through 9.7):
+
+```bash
+docker exec -it hw-autonomy bash
 source /opt/ros/humble/setup.bash
 source /opt/px4_ros2_ws/install/setup.bash
 ros2 topic list | grep fmu
@@ -555,11 +591,13 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 ```
 
 You should see the full `/fmu/in/*`/`/fmu/out/*` topic set, same as sim
-([Reference §6](reference.md#sec-6)) — if you see nothing, the uXRCE-DDS
-agent isn't reaching PX4; recheck [step 9.2](#dry-run) before going
-further. This is the single most likely place for this bring-up's first
-real bug to show up — treat "topics exist but look stale/frozen" as a
-failure too, not just "topics missing entirely."
+([Reference §6](reference.md#sec-6)) — if you see nothing, first
+double-check the agent terminal is actually still running and didn't
+error out, then recheck [step 9.2](#dry-run) (device path, and whether
+you recreated the container after editing `.env`) before assuming
+anything more complicated is wrong. This is the single most likely place
+for this bring-up's first real bug to show up — treat "topics exist but
+look stale/frozen" as a failure too, not just "topics missing entirely."
 
 ### 9.4 Confirm the localization source is configured correctly
 
@@ -571,8 +609,12 @@ continuing — an unnoticed leftover vision-mode config from an earlier
 test is exactly the kind of thing a dry run exists to catch.
 
 **If you opted into `use_mavlink_switch:=true`** (optional Link 2
-wired): confirm that link instead —
+wired): confirm that link instead, in your second terminal from
+[step 9.3](#dry-run) — this one needs the actual workspace sourced too,
+not just the two setup files above, since `common_perception` lives
+there:
 ```bash
+source /ros2_ws_build/install/setup.bash
 ros2 run common_perception set_localization_source \
     --source gps --mavlink-url <your MAVLINK_URL>
 ```
@@ -632,18 +674,28 @@ for its position before continuing.
 
 ### 9.8 This repo's own arm/offboard/land cycle
 
+**First, stop the `MicroXRCEAgent` you started by hand in
+[step 9.3](#dry-run)** (`Ctrl-C` in that terminal). `make hw-flight-test`
+starts its own copy as part of `hw.launch.py`'s launch graph — two agent
+processes can't both hold the same serial device at once, and the
+mission's own launch will fail (or steal the device out from under your
+manual one) if you leave it running.
+
 ```bash
 make hw-flight-test
 ```
 
 Props still off. Confirm: PX4 accepts the offboard mode switch, arming
 succeeds (`Armed and offboard — climbing to takeoff height` in the log —
-same code, same message as sim), then **immediately disarm manually**
-(`px4-commander disarm -f` from a second `shell-hw` session, or your RC
-kill switch, now confirmed working from [step 9.6](#dry-run)) rather
-than letting it try to "climb" with no real thrust — the point here is
-confirming the arm/offboard/command path works, not watching the motors
-spin uselessly.
+same code, same message as sim), then **immediately disarm manually** —
+your RC kill switch (now confirmed working from [step 9.6](#dry-run)) or
+QGroundControl's own disarm button. (**Not** `px4-commander disarm -f` —
+that's a SITL-only shell command that runs inside PX4's own simulated
+console in the `px4-sim` container; there is no local `px4-sim`-style
+console for a real Pixhawk, since PX4 is running on the physical board,
+not as a process in this container.) Disarm promptly rather than letting
+it try to "climb" with no real thrust — the point here is confirming the
+arm/offboard/command path works, not watching the motors spin uselessly.
 
 ### 9.9 Dry-run checklist
 
