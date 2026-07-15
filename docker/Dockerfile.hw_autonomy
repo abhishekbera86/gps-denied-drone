@@ -147,7 +147,26 @@ RUN . /opt/ros/humble/setup.sh \
     && colcon build --packages-select realsense2_camera_msgs realsense2_camera
 
 # ── OpenVINS (Phase 3/4 VIO estimator) ─────────────────────────────────────
-# Identical to Dockerfile.ros2_autonomy.
+# Unlike Dockerfile.ros2_autonomy's identical build (fine on a dev-host
+# x86_64 machine with much more RAM), this ARM64 build hit a REAL,
+# confirmed-live failure with the default unlimited parallelism: on an
+# Orange Pi 5 Plus, colcon/CMake defaulting to `-j$(nproc)` (8 cores)
+# inside `ov_msckf` specifically (the heaviest of the four OpenVINS
+# packages — the actual MSCKF estimator, the most Eigen/Ceres
+# template-heavy code) spawned enough simultaneous heavy C++ compile
+# jobs to exhaust RAM and drive the board into catastrophic swap
+# thrashing — confirmed live: the build sat with ZERO output for 14+
+# hours (not merely slow — `ov_core`/`ov_init`/`ov_eval`, the three
+# lighter packages, finished in under 4 minutes each with the exact same
+# settings, so this is `ov_msckf`-specific memory pressure, not a
+# generic "ARM is slow" issue). `-DCMAKE_BUILD_PARALLEL_LEVEL=1` forces
+# fully sequential compilation within each package — slower wall-clock
+# time, but bounds peak memory to roughly what ONE heavy translation
+# unit needs instead of up to 8 at once. If build time becomes the
+# bottleneck instead once this is confirmed working, try raising this to
+# 2 before going back to unlimited — but re-test from a cold layer cache
+# each time you change it, since a value that looks fine on a rebuild
+# reusing warm caches can still fail on a true from-scratch build.
 WORKDIR /opt/openvins_ws/src
 RUN git clone --depth 1 https://github.com/rpng/open_vins.git
 
@@ -157,7 +176,8 @@ RUN apt-get update \
     && rosdep install --from-paths src --ignore-src -y \
     && rm -rf /var/lib/apt/lists/*
 RUN . /opt/ros/humble/setup.sh \
-    && colcon build --packages-select ov_core ov_init ov_msckf ov_eval
+    && colcon build --packages-select ov_core ov_init ov_msckf ov_eval \
+        --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=1
 
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
     && echo "source /opt/px4_ros2_ws/install/setup.bash" >> /root/.bashrc \
