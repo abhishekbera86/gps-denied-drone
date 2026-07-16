@@ -47,6 +47,7 @@ root-caused and confirmed benign rather than patched, and say so explicitly.
 36. [Follow-up to issue 35: `vio_test` was still hardcoded into `ros_gz_bridge.yaml`'s topic paths — f...](#issue-36)
 37. [`run_subscribe_msckf` (OpenVINS's own process) segfaults on every shutdown — root-caused to upstr...](#issue-37)
 38. [`hw-autonomy`'s DDS agent was tied to the mission launch instead of the container, unlike sim — made hardware dry-run bench testing needlessly blind](#issue-38)
+39. [`make build-hw` re-ran the OpenVINS/RealSense layers on a rebuild despite no relevant file changing — Docker build-cache eviction under disk pressure, not a caching bug](#issue-39)
 
 ---
 
@@ -1056,6 +1057,64 @@ there's no equivalent local console for a real Pixhawk, since PX4 runs
 on the physical board, not as a process in this container. Replaced with
 the RC kill switch / QGroundControl's own disarm button, both already
 covered elsewhere in the same section.
+
+<a id="issue-39"></a>
+
+**39. `make build-hw` re-ran the OpenVINS/RealSense layers on a rebuild
+despite no relevant file changing — Docker build-cache eviction under
+disk pressure, not a caching bug (2026-07-16).** During a routine
+`git pull` + `make build-hw` (no code changes to this bring-up session,
+just picking up unrelated doc/commit history), the build unexpectedly
+re-ran `apt-get update && rosdep update && rosdep install` for
+`realsense-ros`, then recompiled `ov_core`/`ov_init`/`ov_eval`/
+`ov_msckf` from scratch — the exact layers that took 865s the previous
+day (and, before the `-DCMAKE_BUILD_PARALLEL_LEVEL=1` fix documented in
+`docker/Dockerfile.hw_autonomy`'s own OpenVINS-section comment, 14+
+hours before that).
+
+**Confirmed NOT caused by any content change**: `git diff` between the
+previous successful build's commit and the one being built showed the
+Dockerfile instructions up through and including that `rosdep install`
+step were byte-identical — Docker's RUN-layer cache key is the parent
+layer's ID plus the instruction's own text, so an unchanged instruction
+with an unchanged parent should always hit cache, regardless of how much
+time passed or what else in the repo changed.
+
+**Root cause: BuildKit's build-cache has a finite size budget, and this
+board's storage is genuinely constrained** — an Orange Pi's eMMC/SD is
+much smaller than a typical dev-host disk, and this Dockerfile's layers
+include several `git clone`-heavy steps (Micro-XRCE-DDS-Agent,
+librealsense, realsense-ros, open_vins) plus large compiled artifacts.
+Under disk pressure, BuildKit garbage-collects older/larger cache
+entries even when their instruction text hasn't changed — the earlier,
+smaller `apt-get`/`pip3` layers survived because they're cheap to keep;
+the large `rosdep install`/compile layers were the first evicted.
+
+**Not "fixed" — this is expected behavior on constrained storage, and
+the real lesson is workflow, not a bug to patch.** Two things reduce how
+often this bites:
+- **Don't run `make build-hw` reflexively on every `git pull`.** It's
+  only needed when `docker/Dockerfile.hw_autonomy` or
+  `docker/entrypoint_hw_autonomy.sh` actually changed — check first:
+  ```bash
+  git diff HEAD@{1} HEAD -- docker/Dockerfile.hw_autonomy docker/entrypoint_hw_autonomy.sh
+  ```
+  If that's empty, skip straight to `docker compose --profile hw up -d`
+  (a no-op unless compose config changed) + `make build-ws-hw` (which
+  only recompiles this repo's own small `ros2_ws/src` packages, not
+  anything baked into the image — see
+  [step 7](hardware-bringup-gps.md#build) of the GPS bring-up guide).
+- **Watch free disk space** (`df -h`, `docker system df`) if rebuilds
+  keep re-triggering these layers even with no relevant file change —
+  that's the signal the cache budget is the limiting factor, not
+  anything about the Dockerfile itself.
+
+Practically: if a full rebuild IS genuinely needed, it's not dangerous
+the way the original 14-hour hang was — the `-DCMAKE_BUILD_PARALLEL_LEVEL=1`
+fix is already baked into the Dockerfile, so a from-scratch `ov_msckf`
+compile lands around the ~865s mark seen previously, not hours.
+Confirmed live: this exact scenario re-ran and completed normally
+within minutes, not a repeat of the original hang.
 
 ---
 

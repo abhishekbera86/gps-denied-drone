@@ -471,6 +471,35 @@ docker compose --profile hw up -d
 make build-ws-hw
 ```
 
+**After today: don't run `make build-hw` reflexively on every `git
+pull`.** It rebuilds the whole image, including the expensive
+from-source layers above (librealsense2, realsense-ros, OpenVINS) —
+those only need to change when `docker/Dockerfile.hw_autonomy` or
+`docker/entrypoint_hw_autonomy.sh` themselves change, which is rare.
+Most day-to-day pulls only touch this repo's own `ros2_ws/src`
+(launch files, mission code, params) or `resource/*.md` — neither
+needs a full image rebuild. Check first:
+
+```bash
+git diff HEAD@{1} HEAD -- docker/Dockerfile.hw_autonomy docker/entrypoint_hw_autonomy.sh
+```
+
+If that's empty, skip straight to `docker compose --profile hw up -d`
+(a no-op unless compose config changed) + `make build-ws-hw` — the
+latter only recompiles this repo's own small packages, not anything
+baked into the image, so it's fast regardless.
+
+Even when a genuine `Dockerfile.hw_autonomy` change forces a real
+rebuild, don't assume an unchanged layer means Docker will actually
+reuse its cache — on constrained board storage it can still re-run
+already-built layers (a confirmed real occurrence; see
+[Known Issues #39](known-issues.md#issue-39)). If you see `rosdep
+install` or the OpenVINS compile re-run with no relevant file changed,
+that's expected under disk pressure, not a bug — let it finish (the
+parallelism fix above is already baked in, so a from-scratch `ov_msckf`
+compile still lands around ~865s, not hours) and check `df -h`/`docker
+system df` if it keeps happening.
+
 <a id="geofence"></a>
 
 ## 8. Derive a real geofence limit

@@ -150,7 +150,7 @@ exhaustive reference tables, and the complete bug/fix history — lives in
 | **[Setup Guide](resource/setup-guide.md)** | Prerequisites, cloning, building the Docker images, starting the simulation (headless or GUI, choosing a Gazebo world), building the ROS 2 workspace. Start here on a fresh machine. |
 | **[Mission Testing Guide](resource/mission-testing.md)** | Waiting for PX4 to be ready, flying the hover test, flying a full waypoint mission, inspecting the running system live, stopping the stack cleanly. |
 | **[Technical Reference](resource/reference.md)** | Every `make` command, every ROS 2 topic and parameter this stack actually uses, every launch file, every environment variable — plus the full GPS/VIO localization-switching mechanism. |
-| **[Known Issues & Fixes](resource/known-issues.md)** | 38 real bugs, gotchas, and dead ends hit building and flying this stack, and exactly how (or whether) each was fixed. Read this before re-debugging something that's already been solved. |
+| **[Known Issues & Fixes](resource/known-issues.md)** | 39 real bugs, gotchas, and dead ends hit building and flying this stack, and exactly how (or whether) each was fixed. Read this before re-debugging something that's already been solved. |
 | **[Localization Source Design](resource/phase3-gps-denied-localization-source.md)** | The full design rationale and debugging history behind GPS/VIO switching — the *why* behind the Technical Reference's *how*. |
 | **[Hardware Bring-Up, Phase 1: GPS](resource/hardware-bringup-gps.md)** | Real Pixhawk 6C + Orange Pi 5 Plus setup, wiring, PX4 flashing/config, and a first GPS flight — **UNTESTED**, no hardware has run this yet. |
 | **[Hardware Bring-Up, Phase 2: VIO](resource/hardware-bringup-vio.md)** | Mounting the real D435i, Kalibr camera-IMU calibration, and a first indoor VIO flight — **UNTESTED**, builds on Phase 1. |
@@ -178,7 +178,7 @@ resource/
   setup-guide.md                  Prerequisites + build/start walkthrough
   mission-testing.md              Flying and inspecting the stack
   reference.md                    Commands, topics, parameters, launch files, env vars
-  known-issues.md                 38 real bugs and fixes hit during bring-up
+  known-issues.md                 39 real bugs and fixes hit during bring-up
   phase3-gps-denied-localization-source.md   Full VIO/localization-switch design + debugging history
   hardware-bringup-gps.md         Phase 4 Phase 1: real GPS flight, step by step (UNTESTED)
   hardware-bringup-vio.md         Phase 4 Phase 2: real VIO + calibration, step by step (UNTESTED)
