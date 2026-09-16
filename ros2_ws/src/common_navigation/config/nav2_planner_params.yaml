@@ -1,0 +1,88 @@
+# nav2_planner_params.yaml — Phase 5 Milestone B: Nav2 PLANNING ONLY.
+#
+# Deliberately excludes controller_server/bt_navigator — this project's own
+# velocity control (common_control/offboard_control_node.py's
+# _publish_setpoint/_capped_velocity_toward position+feed-forward-velocity
+# setpoints) and its safety watchdogs (geofence, estimate-health) already
+# do that job; running Nav2's own cmd_vel controller alongside them would
+# fight for control of the vehicle. Only planner_server (+ its own internal
+# costmap) is brought up — see ../launch/nav2_planner.launch.py.
+#
+# global_costmap.global_frame is `odom`, NOT `map`: this project has no
+# absolute/global localization or loop closure (VIO/EKF2 only) — `map`
+# would just be a second name for the same frame `odom` already is, so
+# there is no separate map frame or static map->odom transform anywhere in
+# this stack. See nav2_planner.launch.py's own header for the same point.
+#
+# No obstacle/depth data is reconciled yet (see
+# ros2_ws/src/common_perception/config/ros_gz_bridge.yaml's depth-camera
+# comment: sim 32FC1 meters vs real D435i 16UC1 millimeters, deliberately
+# not reconciled this phase) — `plugins: ["inflation_layer"]` below is the
+# closest-to-empty valid costmap: confirmed live that Costmap2DROS's
+# `plugins` param crashes (InvalidParameterValueException) if given an
+# explicit empty YAML list `[]`, and OMITTING the key entirely silently
+# falls back to Nav2's own real DEFAULT layer set (static_layer +
+# obstacle_layer + inflation_layer — NOT empty, confirmed live: static_layer
+# tried subscribing to a /map topic that doesn't exist in this stack).
+# inflation_layer alone is a real, valid, non-empty plugin list that does
+# nothing without obstacle/static data beneath it — combined with
+# `track_unknown_space: false` (every cell starts FREE_SPACE, not
+# NO_INFORMATION), the net result is the same plain open rectangle this
+# milestone wants, reached without hitting either bug above. A real
+# depth-based obstacle layer is explicitly deferred — see
+# DEVELOPMENT_STATUS.md / IMPLEMENTATION_PLAN.md's Phase 5 notes.
+#
+# Costmap size/origin MUST be kept in sync BY HAND with
+# sim_bringup/config/sim_params.yaml's geofence_hard_limit_m (currently
+# 3.75) — nothing shares this value automatically yet.
+# width/height = 2*3.75 + 2.0m buffer = 9.5, rounded up to 10 (Costmap2DROS
+# declares these as INTEGER meters, confirmed live —
+# InvalidParameterTypeException when given 9.5), centered on the origin
+# (origin_x/y = -width/2 = -5.0).
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    use_sim_time: false
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true
+
+# Costmap2DROS self-namespaces under its own name — the params path is
+# genuinely double-nested (<namespace>/<node_name>), a well-known Nav2 YAML
+# convention, not a typo. Its published topic is /global_costmap/costmap
+# for the same reason (matches common_perception/config/quad.rviz's
+# "Global Costmap" display).
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: false
+      always_send_full_costmap: true
+      track_unknown_space: false
+      width: 10
+      height: 10
+      resolution: 0.1
+      origin_x: -5.0
+      origin_y: -5.0
+      plugins: ["inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        # 0.15, not 0.1: Costmap2DROS logged a real (if harmless) warning at
+        # 0.1 — smaller than the x500's own computed footprint inscribed
+        # radius (0.108) — confirmed live.
+        inflation_radius: 0.15
+
+lifecycle_manager_navigation:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    node_names: ["planner_server"]

@@ -1,24 +1,24 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>common_control</name>
+  <name>common_navigation</name>
   <version>0.1.0</version>
   <description>
-    Offboard flight control node talking directly to PX4 over its native
-    uXRCE-DDS ROS 2 bridge (px4_msgs). Identical in sim and on real hardware.
+    Phase 5 Milestone B: Nav2 planner-only bring-up (planner_server +
+    lifecycle_manager + goal_relay) feeding common_control's NAV_WAYPOINTS
+    state via Nav2's own native /plan topic. Deliberately excludes
+    controller_server/bt_navigator — see config/nav2_planner_params.yaml.
   </description>
   <maintainer email="a.bera.gcect@gmail.com">Abhishek Bera</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
-  <depend>px4_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>nav_msgs</depend>
-  <!-- Phase 5 Milestone A: reuses frame_transforms.enu_to_ned for the
-       /goal_pose and /plan runtime-nav-goal subscriptions. No reverse
-       dependency exists (common_perception does not depend on
-       common_control), so this stays acyclic. -->
-  <depend>common_perception</depend>
+  <depend>nav2_msgs</depend>
+
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

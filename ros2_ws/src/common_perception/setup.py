@@ -32,6 +32,7 @@ setup(
             'loopback_odometry_bridge = common_perception.loopback_odometry_bridge:main',
             'openvins_odometry_bridge = common_perception.openvins_odometry_bridge:main',
             'state_tf_publisher = common_perception.state_tf_publisher:main',
+            'world_markers = common_perception.world_markers:main',
         ],
     },
 )

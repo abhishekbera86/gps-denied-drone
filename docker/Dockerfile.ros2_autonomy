@@ -56,7 +56,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the uXRCE-DDS bridge used everywhere else in this stack cannot set PX4
 # parameters in this pinned version. See
 # resource/phase3-gps-denied-localization-source.md.
-RUN pip3 install --no-cache-dir pymavlink
+#
+# websockets — operator_portal/container_telemetry_node.py forwards
+# vehicle_odometry/vehicle_status from inside this container to the portal's
+# FastAPI server on the host over a plain websocket (host networking makes
+# localhost:8080 reachable from in here).
+RUN pip3 install --no-cache-dir pymavlink websockets
 
 # ── ros_gz_bridge, matched to Gazebo HARMONIC (Phase 3 Milestone B) ────────
 # Humble's DEFAULT `ros-humble-ros-gz-bridge` (from packages.ros.org) links
@@ -124,6 +129,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # variant and ships neither GUI tools (rviz2) nor tf2_ros itself.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-rviz2 ros-humble-tf2-ros \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Nav2, PLANNING ONLY (Phase 5 Milestone B) ──────────────────────────────
+# Named packages, not the full ros-humble-navigation2 metapackage:
+# deliberately excludes nav2-controller/nav2-bt-navigator — this project's
+# own velocity control and safety watchdogs already own vehicle control,
+# see ros2_ws/src/common_navigation/config/nav2_planner_params.yaml's
+# header for the full reasoning.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-nav2-planner ros-humble-nav2-navfn-planner \
+        ros-humble-nav2-lifecycle-manager \
+        ros-humble-nav2-costmap-2d ros-humble-nav2-msgs ros-humble-nav2-util \
     && rm -rf /var/lib/apt/lists/*
 
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \

@@ -14,6 +14,7 @@ motivated dropping Aerostack2: get the sequence wrong here and PX4 silently
 refuses the mode switch.
 """
 
+import math
 import os
 from enum import Enum, auto
 
@@ -22,6 +23,9 @@ from rclpy.exceptions import ParameterUninitializedException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
+from common_perception.frame_transforms import enu_to_ned
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path
 from px4_msgs.msg import (
     OffboardControlMode,
     TrajectorySetpoint,
@@ -48,6 +52,7 @@ class FlightState(Enum):
     TAKEOFF = auto()
     WAYPOINTS = auto()
     HOVER = auto()
+    NAV_WAYPOINTS = auto()
     LAND = auto()
     DONE = auto()
 
@@ -108,6 +113,24 @@ class OffboardControlNode(Node):
     with one difference: a short dwell (`estimate_invalid_abort_dwell_s`)
     before aborting, since a single-tick validity flicker shouldn't end a
     flight by itself the way a hard position-bound breach should.
+
+    NAV_WAYPOINTS (Phase 5 Milestone A): a runtime-injected route, distinct
+    from the static `set_waypoints()` queue a mission hands in before
+    takeoff. `/goal_pose` (a single `geometry_msgs/PoseStamped` — the exact
+    topic RViz2's "2D Goal Pose" tool publishes) and `/plan` (a
+    `nav_msgs/Path` — what `nav2_planner_server` publishes natively) are
+    only ever accepted while HOVER, converting each pose's ENU (East,
+    North, Up) position to this project's internal NED via
+    `common_perception.frame_transforms.enu_to_ned` and reusing the SAME
+    `_waypoints`/`_waypoint_index` machinery `WAYPOINTS` already flies —
+    so `_geofence_bounds()` (which reads `_waypoints` fresh every tick)
+    automatically widens to cover an injected goal with no new geofence
+    code, and `_check_geofence`/`_check_estimate_health` are called here
+    exactly as in every other flying state. Unlike `WAYPOINTS`, finishing
+    the route returns to HOVER (re-arming `hover_seconds`) rather than
+    landing — a nav goal is "go somewhere and wait for the next one," not
+    "mission over." A static mission never enters HOVER after takeoff, so
+    it never sees these topics — this is purely additive.
     """
 
     def __init__(self, node_name: str = 'offboard_control_node') -> None:
@@ -147,6 +170,11 @@ class OffboardControlNode(Node):
         self.create_subscription(
             VehicleLandDetected, '/fmu/out/vehicle_land_detected',
             self._on_land_detected, PX4_QOS)
+
+        # Nav goal input (Phase 5 Milestone A) — plain ROS-native QoS, NOT
+        # PX4_QOS: these come from RViz2/Nav2, not the PX4 DDS bridge.
+        self.create_subscription(PoseStamped, '/goal_pose', self._on_goal_pose, 10)
+        self.create_subscription(Path, '/plan', self._on_nav_path, 10)
 
         self._vehicle_local_position = VehicleLocalPosition()
         self._vehicle_status = VehicleStatus()
@@ -199,6 +227,13 @@ class OffboardControlNode(Node):
         # means the plain takeoff-hover-land profile.
         self._waypoints: list[tuple[float, float, float, float]] = []
         self._waypoint_index = 0
+
+        # Where HOVER holds station (x, y) — the takeoff origin by default
+        # (the ONLY case before NAV_WAYPOINTS existed), updated to the last
+        # reached position when NAV_WAYPOINTS completes. See HOVER's own
+        # branch in `_control_loop`.
+        self._hover_target_x = 0.0
+        self._hover_target_y = 0.0
 
         self._timer = self.create_timer(1.0 / control_rate_hz, self._control_loop)
 
@@ -308,6 +343,66 @@ class OffboardControlNode(Node):
     def _distance_to(self, x: float, y: float, z: float) -> float:
         pos = self._vehicle_local_position
         return ((pos.x - x) ** 2 + (pos.y - y) ** 2 + (pos.z - z) ** 2) ** 0.5
+
+    # ── Runtime nav goals (Phase 5 Milestone A) ─────────────────────────────
+    def _pose_to_ned_waypoint(
+            self, position, prev_n: float, prev_e: float) -> tuple[float, float, float, float]:
+        """Convert one ENU `geometry_msgs/Point`-like position to a NED waypoint.
+
+        Altitude is deliberately NOT taken from `position.z`: this is fed by
+        RViz2's "2D Goal Pose" tool and Nav2's 2D planner, both of which only
+        ever produce z=0 in the map plane — there is no meaningful altitude
+        to take from either source, so holding at the current cruise
+        `_target_z` is the correct handling of a source with no vertical
+        information, not a shortcut. Yaw faces from the previous point
+        (the vehicle's current position for the first waypoint) toward this
+        one, same atan2(east_diff, north_diff) convention `MissionBase.
+        heading_deg` uses — inlined here rather than imported, since
+        `common_missions` already depends on `common_control`
+        (`MissionBase(OffboardControlNode)`) and importing the reverse would
+        be circular.
+        """
+        n, e, _ = enu_to_ned((position.x, position.y, position.z))
+        yaw = math.atan2(e - prev_e, n - prev_n)
+        return (n, e, self._target_z, yaw)
+
+    def _accept_runtime_waypoints(
+            self, waypoints: list[tuple[float, float, float, float]]) -> None:
+        """Fly a runtime-injected route (single goal or a planned path).
+
+        Only accepted while HOVER: a static mission (`WAYPOINTS`) never
+        enters HOVER after takeoff, so a stray `/goal_pose`/`/plan` message
+        during a real mission is a logged no-op, never a state change.
+        Reuses `set_waypoints()` — its body has no construction-time-only
+        constraint, it was just never called again after `__init__` before
+        this.
+        """
+        if self._state != FlightState.HOVER:
+            self.get_logger().warn(
+                f'Ignoring nav goal — only accepted while HOVER (currently '
+                f'{self._state.name})')
+            return
+        self.set_waypoints(waypoints)
+        self.get_logger().info(f'Nav goal accepted — flying {len(waypoints)} waypoint(s)')
+        self._state = FlightState.NAV_WAYPOINTS
+
+    def _on_goal_pose(self, msg: PoseStamped) -> None:
+        pos = self._vehicle_local_position
+        waypoint = self._pose_to_ned_waypoint(msg.pose.position, pos.x, pos.y)
+        self._accept_runtime_waypoints([waypoint])
+
+    def _on_nav_path(self, msg: Path) -> None:
+        if not msg.poses:
+            self.get_logger().warn('Ignoring empty /plan path')
+            return
+        pos = self._vehicle_local_position
+        prev_n, prev_e = pos.x, pos.y
+        waypoints = []
+        for pose_stamped in msg.poses:
+            waypoint = self._pose_to_ned_waypoint(pose_stamped.pose.position, prev_n, prev_e)
+            waypoints.append(waypoint)
+            prev_n, prev_e = waypoint[0], waypoint[1]
+        self._accept_runtime_waypoints(waypoints)
 
     # ── Geofence ─────────────────────────────────────────────────────────
     def _geofence_bounds(self) -> tuple[tuple[float, float], tuple[float, float], float]:
@@ -611,10 +706,27 @@ class OffboardControlNode(Node):
                     self._state = FlightState.LAND
             return
 
+        if self._state == FlightState.NAV_WAYPOINTS:
+            if self._check_geofence() or self._check_estimate_health():
+                return
+            x, y, z, yaw = self._waypoints[self._waypoint_index]
+            self._publish_setpoint(x, y, z, yaw)
+            if self._distance_to(x, y, z) <= self._waypoint_tolerance_m:
+                self.get_logger().info(
+                    f'Nav waypoint {self._waypoint_index + 1}/{len(self._waypoints)} reached '
+                    f'({x:.1f}, {y:.1f}, {z:.1f})')
+                self._waypoint_index += 1
+                if self._waypoint_index >= len(self._waypoints):
+                    self.get_logger().info('Nav goal reached — hovering, ready for next goal')
+                    self._hover_target_x, self._hover_target_y = x, y
+                    self._hover_ticks_remaining = int(self._hover_seconds * self._control_rate_hz)
+                    self._state = FlightState.HOVER
+            return
+
         if self._state == FlightState.HOVER:
             if self._check_geofence() or self._check_estimate_health():
                 return
-            self._publish_setpoint(0.0, 0.0, self._target_z)
+            self._publish_setpoint(self._hover_target_x, self._hover_target_y, self._target_z)
             self._hover_ticks_remaining -= 1
             if self._hover_ticks_remaining <= 0:
                 self.get_logger().info('Hover complete — landing')

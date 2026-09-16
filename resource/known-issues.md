@@ -48,6 +48,10 @@ root-caused and confirmed benign rather than patched, and say so explicitly.
 37. [`run_subscribe_msckf` (OpenVINS's own process) segfaults on every shutdown — root-caused to upstr...](#issue-37)
 38. [`hw-autonomy`'s DDS agent was tied to the mission launch instead of the container, unlike sim — made hardware dry-run bench testing needlessly blind](#issue-38)
 39. [`make build-hw` re-ran the OpenVINS/RealSense layers on a rebuild despite no relevant file changing — Docker build-cache eviction under disk pressure, not a caching bug](#issue-39)
+40. [`HOVER` always re-targeted the takeoff origin, not the vehicle's current position — surfaced by Phase 5 Milestone A's nav-goal state reusing it](#issue-40)
+41. [Nav2 planner-only bring-up (Phase 5 Milestone B) hit four separate, real bugs before it worked](#issue-41)
+42. [RViz2's `Map` display (Nav2 costmap) fails to render on this dev machine — a real, unresolved upstream shader bug](#issue-42)
+43. [With `nav2:=true`, direct `/goal_pose` injection always wins the race over Nav2's planned `/plan` path](#issue-43)
 
 ---
 
@@ -1115,6 +1119,122 @@ fix is already baked into the Dockerfile, so a from-scratch `ov_msckf`
 compile lands around the ~865s mark seen previously, not hours.
 Confirmed live: this exact scenario re-ran and completed normally
 within minutes, not a repeat of the original hang.
+
+<a id="issue-40"></a>
+
+**40. `HOVER` always re-targeted the takeoff origin, not the vehicle's
+current position — surfaced by Phase 5 Milestone A's runtime nav-goal
+state reusing it (2026-09-15).** `FlightState.HOVER`'s control-loop branch
+unconditionally called `_publish_setpoint(0.0, 0.0, self._target_z)` — a
+hardcoded origin. Harmless for the original Phase 1 use (hover always
+starts at the origin), but Milestone A's new `NAV_WAYPOINTS` state
+transitions back into `HOVER` after reaching a runtime-injected goal, so
+the vehicle immediately flew back to the origin instead of holding
+station where it had just arrived — confirmed live: sent a goal to
+`(2, 2)`, watched it fly there, then fly straight back. Fixed with a
+`self._hover_target_x/y` pair, defaulting to `(0.0, 0.0)` (unchanged
+Phase 1 behavior) and updated to the last reached position when
+`NAV_WAYPOINTS` completes; `HOVER` now publishes that instead of a literal
+`(0.0, 0.0)`. Verified live: position held within the same ~0.3-0.4m band
+across two checks 8s apart after reaching a goal, no drift back toward the
+origin.
+
+<a id="issue-41"></a>
+
+**41. Nav2 planner-only bring-up (Phase 5 Milestone B) hit four separate,
+real bugs before it worked (2026-09-15).** In order found:
+1. **Missing `setup.cfg`.** The new `common_navigation` package had no
+   `setup.cfg` (the standard ament_python boilerplate every other package
+   in this repo has) — its console script installed to plain
+   `install/common_navigation/bin/` instead of the `lib/common_navigation/`
+   path `ros2 run`/`ros2 launch` actually search. Fixed by adding the same
+   two-line `setup.cfg` every other package here already has.
+2. **`ros-humble-nav2-navfn-planner` was never installed** — a genuinely
+   separate apt package from `ros-humble-nav2-planner` (the server
+   framework) that provides the actual `NavfnPlanner` plugin class.
+   Without it: `Failed to create global planner ... does not exist.
+   Declared types are` (empty list) at activation. Added to
+   `docker/Dockerfile.ros2_autonomy`.
+3. **`global_costmap.global_costmap.ros__parameters.plugins: []` crashes
+   the node outright** — confirmed live:
+   `InvalidParameterValueException: parameter_value_from failed for
+   parameter 'plugins': No parameter value set`, i.e. an explicit empty
+   YAML list is rejected by Costmap2DROS's parameter loader (this is
+   Nav2/rcl_yaml itself, not a mistake specific to this repo). Simply
+   omitting the `plugins:` key is NOT equivalent — confirmed live it
+   silently falls back to Nav2's own real default layer set
+   (`static_layer` + `obstacle_layer` + `inflation_layer`, the first of
+   which tried subscribing to a `/map` topic that doesn't exist in this
+   VIO-only stack). Fixed by setting `plugins: ["inflation_layer"]` — a
+   real, valid, non-empty plugin list that does nothing meaningful without
+   obstacle/static data beneath it, which combined with
+   `track_unknown_space: false` gives the same "plain open rectangle" this
+   milestone deliberately wants (see
+   `ros2_ws/src/common_navigation/config/nav2_planner_params.yaml`'s own
+   header for the full reasoning — no real depth/obstacle layer is wired
+   up yet, deliberately deferred).
+4. **Costmap `width`/`height` must be integers, not doubles** — confirmed
+   live: `InvalidParameterTypeException: parameter 'height' has invalid
+   type: ... is of type {integer}, setting it to {double} is not allowed`.
+   `9.5` (the exact geofence-derived value) was rejected; rounded up to
+   the integer `10` instead.
+
+All four confirmed fixed by a real, live `planner_server` reaching
+`active`, computing a real path (`ComputePathToPose` returning `SUCCEEDED`
+with dozens of poses), and publishing it on `/plan` — checked via direct
+topic/lifecycle inspection, not just "it launched with no errors."
+
+<a id="issue-42"></a>
+
+**42. RViz2's `Map` display (used for the Nav2 costmap) fails to render on
+this dev machine — a real, unresolved upstream shader bug, not a config
+mistake (2026-09-15).** RViz2's own log shows, right as the costmap
+display initializes:
+```
+Vertex Program:rviz/glsl120/indexed_8bit_image.vert Fragment Program:rviz/glsl120/indexed_8bit_image.frag GLSL link result :
+active samplers with a different type refer to the same texture image unit
+```
+Confirmed this is NOT fixable from this repo's config: tried both
+`Color Scheme: costmap` and `Color Scheme: raw` (different color lookup
+tables, same underlying 8-bit-indexed-texture shader) — both fail
+identically. Also tried forcing `LIBGL_ALWAYS_SOFTWARE=1` (this project's
+existing `GZ_SW_RENDER` fallback, already used for Gazebo rendering
+issues on this same Intel HD 4600 iGPU) — the error persists even under
+llvmpipe software rendering, so it isn't a hardware-driver-specific issue
+either. This appears to be a genuine Ogre1.9/GLSL1.20 compatibility
+limitation in this rviz2 build. **Not blocking**: the underlying costmap
+data is confirmed correct via direct topic inspection (correct frame,
+correct 100×100 grid, real planner results computed against it) — only
+the visual tile fails to draw. The world-props (`world_markers`, see
+`common_perception/config/quad.rviz`'s `MarkerArray` display) and the
+Nav2 plan (`nav_msgs/Path`, a different display type/shader) both render
+fine.
+
+<a id="issue-43"></a>
+
+**43. With `nav2:=true`, `/goal_pose` reaches `offboard_control_node`
+directly AND gets relayed through Nav2 to `/plan` — the direct path
+currently always wins the race, so Nav2's computed path is visualized but
+does not drive the flight (2026-09-15).** Both
+`offboard_control_node.py`'s own `/goal_pose` subscription (Milestone A)
+and `common_navigation/goal_relay.py`'s `/goal_pose` subscription
+(Milestone B, which calls `compute_path_to_pose` and republishes the
+result on `/plan`) receive the exact same message simultaneously. The
+direct path is a local callback with no round trip; the Nav2 path
+requires a full action-server call. Confirmed live via timestamps: the
+direct single-waypoint flight is accepted (`NAV_WAYPOINTS`) a few
+milliseconds before the Nav2-computed multi-pose path arrives on `/plan`
+— and since `_accept_runtime_waypoints` only accepts new input while
+`HOVER`, the already-in-progress direct flight causes the Nav2 path to be
+correctly, safely ignored (`Ignoring nav goal — only accepted while HOVER
+(currently NAV_WAYPOINTS)`), not double-flown. **Not a crash or safety
+issue** — the existing HOVER-only guard (added for exactly this kind of
+overlapping-input scenario) handles it correctly — but it does mean the
+Nav2 planner's output is currently for visualization/verification only,
+not what actually flies. Making Nav2 the flight-driving source when
+`nav2:=true` is enabled would need a deliberate design change (e.g. only
+subscribing to `/goal_pose` directly when Nav2 is NOT enabled), not yet
+done.
 
 ---
 

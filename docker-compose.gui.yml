@@ -95,6 +95,10 @@ services:
       QT_X11_NO_MITSHM: "1"
       LIBGL_ALWAYS_SOFTWARE: "${GZ_SW_RENDER:-0}"
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+      # Same variable px4-sim itself reads — world_markers.py (viz.launch.py)
+      # parses this exact world's SDF so RViz2 shows the actual props the
+      # vehicle is flying against, not a different/stale world's layout.
+      PX4_GZ_WORLD: "${PX4_GZ_WORLD:-empty}"
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       # common_perception (viz.launch.py, state_tf_publisher, quad.rviz) is
@@ -103,6 +107,12 @@ services:
       # needs both to actually run `ros2 launch common_perception ...`.
       - ./ros2_ws:/ros2_ws:rw
       - colcon_build_cache:/ros2_ws_build
+      # Read-only access to the same overlay world SDFs px4-sim boots from
+      # (docker/px4_sitl_worlds/*.sdf, COPY'd into the px4-sim image at
+      # build time) — world_markers.py parses whichever one PX4_GZ_WORLD
+      # selects directly from source, rather than duplicating prop
+      # positions here where they could silently drift out of sync.
+      - ./docker/px4_sitl_worlds:/px4_sitl_worlds:ro
     devices:
       - /dev/dri:/dev/dri
     depends_on:

@@ -29,6 +29,7 @@ Examples:
       localization_source:=vision
   ros2 launch sim_bringup sim.launch.py action:=mission mission:=square \
       localization_source:=vision vio_backend:=openvins
+  ros2 launch sim_bringup sim.launch.py action:=hover nav2:=true
 """
 
 import os
@@ -69,6 +70,18 @@ def _after_localization_source_set(event, context):
             }.items(),
         ),
     ]
+
+    if LaunchConfiguration('nav2').perform(context) == 'true':
+        # Phase 5 Milestone B: planner-only Nav2 (see
+        # common_navigation/config/nav2_planner_params.yaml's header) —
+        # feeds common_control's NAV_WAYPOINTS state via Nav2's own native
+        # /plan topic, no bridge node. Independent of localization_source:
+        # Nav2 only ever sees the already-fused odom->base_link TF, same as
+        # RViz2, regardless of GPS vs vision underneath.
+        nav2_launch = os.path.join(
+            get_package_share_directory('common_navigation'), 'launch', 'nav2_planner.launch.py')
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(nav2_launch)))
 
     if LaunchConfiguration('localization_source').perform(context) == 'vision':
         vio_backend = LaunchConfiguration('vio_backend').perform(context)
@@ -119,6 +132,10 @@ def generate_launch_description():
             description="When localization_source=vision, which VIO feeds it: "
                         "'loopback' (Milestone A fake-VIO stand-in) or "
                         "'openvins' (Milestone B real VIO)"),
+        DeclareLaunchArgument(
+            'nav2', default_value='false',
+            description="'true' to bring up Nav2 planner-only bring-up "
+                        '(Phase 5 Milestone B, see common_navigation) alongside the flight'),
         DeclareLaunchArgument(
             'mavlink_url', default_value='udpin:0.0.0.0:14540',
             description=(

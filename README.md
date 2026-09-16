@@ -14,7 +14,9 @@ on the Orange Pi 5 Plus** — no ROS 2, no PX4 toolchain, no Gazebo, on either
 machine. All of it lives in containers.
 
 **Status:** Phases 0–3 complete and flight-tested in simulation (GPS and
-GPS-denied/VIO). Phase 4 (real hardware) not started. See [Roadmap](#roadmap).
+GPS-denied/VIO). Phase 4 (real hardware) infrastructure written, not yet run
+on real hardware. Phase 5 (basic Nav2 navigation) Milestones A+B built and
+flight-verified in sim. See [Roadmap](#roadmap).
 
 ---
 
@@ -23,10 +25,11 @@ GPS-denied/VIO). Phase 4 (real hardware) not started. See [Roadmap](#roadmap).
 1. [Objective](#objective)
 2. [Architecture](#architecture)
 3. [Quick Start](#quick-start)
-4. [Documentation](#documentation)
-5. [Repository Layout](#repository-layout)
-6. [No Upstream Repos Are Forked or Modified](#no-upstream-repos-are-forked-or-modified)
-7. [Roadmap](#roadmap)
+4. [Testing Each Phase](#testing-each-phase)
+5. [Documentation](#documentation)
+6. [Repository Layout](#repository-layout)
+7. [No Upstream Repos Are Forked or Modified](#no-upstream-repos-are-forked-or-modified)
+8. [Roadmap](#roadmap)
 
 ---
 
@@ -42,8 +45,10 @@ GPS-denied/VIO). Phase 4 (real hardware) not started. See [Roadmap](#roadmap).
   one file, not editing a monolithic script
 - **One autonomy codebase, two targets**: sim (Gazebo, dev host) and real
   hardware (Orange Pi 5 Plus + Pixhawk 6) run identical mission/control code
-- A clean extension point for **SLAM and Nav2** once basic flight and VIO are
-  solid (not yet built — see [Roadmap](#roadmap))
+- **Basic Nav2 navigation** — a runtime nav-goal state plus a planner-only
+  Nav2 bring-up (no controller/BT — this stack's own velocity control and
+  safety watchdogs keep flying the vehicle) — see [Roadmap](#roadmap).
+  Full SLAM/obstacle-avoidance mapping remains a future extension
 
 ---
 
@@ -54,6 +59,7 @@ GPS-denied/VIO). Phase 4 (real hardware) not started. See [Roadmap](#roadmap).
 │                     common_autonomy (ROS 2 workspace)                │
 │           SHARED — identical source, sim and real hardware          │
 │  common_control/  common_missions/  common_perception/ (VIO)         │
+│  common_navigation/ (Nav2 planner-only, Phase 5)                     │
 └───────────────────────────────┬──────────────────────────────────────┘
                                  │  identical ROS 2 topics
                                  │  (/fmu/in/*, /fmu/out/*, /vio/odometry…)
@@ -139,6 +145,44 @@ system, and shutting down cleanly — continue to the
 
 ---
 
+## Testing Each Phase
+
+One-time setup for everything below:
+
+```bash
+make build       # Docker images (~15-40 min first time)
+make sim         # or: make sim-gui to watch it fly
+make build-ws    # colcon-builds the ROS 2 workspace
+```
+
+Between separate test flights, always fully cycle the stack rather than
+partially restarting it (`make stop` then `make sim`/`make sim-gui` again)
+— a long-lived container can leave PX4 in a stale state
+([Known Issues #5](resource/known-issues.md#issue-5)).
+
+| Phase | What it proves | Command |
+|---|---|---|
+| **0 — Boot** | PX4 SITL + Gazebo boot, DDS bridge is up | `make logs` (watch for `Ready for takeoff!`) |
+| **1 — Offboard hover** | arm → takeoff → hover → land → disarm, GPS | `make flight-test` |
+| **2 — Waypoint mission** | Named, pluggable missions | `make mission MISSION=square` |
+| **3 — GPS-denied VIO** | Real OpenVINS VIO feeding EKF2, no GPS | `PX4_GZ_WORLD=vio_test make sim` then `make mission MISSION=square LOCALIZATION=vision VIO_BACKEND=openvins` |
+| **4 — Real hardware** | Same code, Pixhawk 6C + D435i + Orange Pi — **UNTESTED, no hardware run yet** | On the Orange Pi: `make build-hw && make build-ws-hw && make hw-flight-test` — see [Hardware Bring-Up](resource/hardware-bringup-gps.md) |
+| **5 — Basic navigation** | Runtime nav goals + planner-only Nav2 | `PX4_GZ_WORLD=vio_test make sim-gui` then `NAV2=true make flight-test` |
+
+Once it's hovering, click RViz2's **"2D Goal Pose"** tool and click a target
+in the 3D view — the drone flies there. RViz2 also shows the actual world
+geometry (`World Props`) and the Nav2-planned route (`Nav2 Plan`, blue)
+alongside the real flown path (`Path`, green).
+
+Two known, non-blocking limitations, both documented in detail in
+[Known Issues](resource/known-issues.md): the Nav2 costmap tile may not
+render on some GPUs ([#42](resource/known-issues.md#issue-42) — the
+underlying data is correct, it's a display-only shader bug), and the
+Nav2-planned path is currently for visualization only — a direct goal
+injection always flies first ([#43](resource/known-issues.md#issue-43)).
+
+---
+
 ## Documentation
 
 The essentials are on this page. Everything else — full walkthroughs,
@@ -150,7 +194,7 @@ exhaustive reference tables, and the complete bug/fix history — lives in
 | **[Setup Guide](resource/setup-guide.md)** | Prerequisites, cloning, building the Docker images, starting the simulation (headless or GUI, choosing a Gazebo world), building the ROS 2 workspace. Start here on a fresh machine. |
 | **[Mission Testing Guide](resource/mission-testing.md)** | Waiting for PX4 to be ready, flying the hover test, flying a full waypoint mission, inspecting the running system live, stopping the stack cleanly. |
 | **[Technical Reference](resource/reference.md)** | Every `make` command, every ROS 2 topic and parameter this stack actually uses, every launch file, every environment variable — plus the full GPS/VIO localization-switching mechanism. |
-| **[Known Issues & Fixes](resource/known-issues.md)** | 39 real bugs, gotchas, and dead ends hit building and flying this stack, and exactly how (or whether) each was fixed. Read this before re-debugging something that's already been solved. |
+| **[Known Issues & Fixes](resource/known-issues.md)** | 43 real bugs, gotchas, and dead ends hit building and flying this stack, and exactly how (or whether) each was fixed. Read this before re-debugging something that's already been solved. |
 | **[Localization Source Design](resource/phase3-gps-denied-localization-source.md)** | The full design rationale and debugging history behind GPS/VIO switching — the *why* behind the Technical Reference's *how*. |
 | **[Hardware Bring-Up, Phase 1: GPS](resource/hardware-bringup-gps.md)** | Real Pixhawk 6C + Orange Pi 5 Plus setup, wiring, PX4 flashing/config, and a first GPS flight — **UNTESTED**, no hardware has run this yet. |
 | **[Hardware Bring-Up, Phase 2: VIO](resource/hardware-bringup-vio.md)** | Mounting the real D435i, Kalibr camera-IMU calibration, and a first indoor VIO flight — **UNTESTED**, builds on Phase 1. |
@@ -178,7 +222,7 @@ resource/
   setup-guide.md                  Prerequisites + build/start walkthrough
   mission-testing.md              Flying and inspecting the stack
   reference.md                    Commands, topics, parameters, launch files, env vars
-  known-issues.md                 39 real bugs and fixes hit during bring-up
+  known-issues.md                 43 real bugs and fixes hit during bring-up
   phase3-gps-denied-localization-source.md   Full VIO/localization-switch design + debugging history
   hardware-bringup-gps.md         Phase 4 Phase 1: real GPS flight, step by step (UNTESTED)
   hardware-bringup-vio.md         Phase 4 Phase 2: real VIO + calibration, step by step (UNTESTED)
@@ -192,8 +236,11 @@ ros2_ws/src/
                                    backends (loopback stand-in, real OpenVINS) (Phase 3 ✓) +
                                    hw_vio.launch.py (Phase 4, UNTESTED) + hw calibration
                                    templates (config/openvins/*_hw.yaml)
-                                   + state_tf_publisher/viz.launch.py — RViz2 live TF/path
-                                   view, sim/hw-agnostic
+                                   + state_tf_publisher/world_markers/viz.launch.py — RViz2
+                                   live TF/path/world-geometry view, sim/hw-agnostic
+  common_navigation/               Nav2 planner-only bring-up (Phase 5 ✓) — planner_server +
+                                   lifecycle_manager + goal_relay, feeding common_control's
+                                   NAV_WAYPOINTS state via Nav2's own /plan topic
   sim_bringup/                    Sim-only launch + params (sim_params.yaml) — includes
                                    autonomy.launch.py, no flight logic of its own (Phase 2.5 ✓)
   hw_bringup/                     Real-hardware bringup (Phase 4, UNTESTED) — serial uXRCE-DDS
@@ -273,7 +320,23 @@ This repo is under active development.
   [Hardware Bring-Up, Phase 1: GPS](resource/hardware-bringup-gps.md) and
   [Phase 2: VIO](resource/hardware-bringup-vio.md) for the step-by-step
   path from here to an actual first flight.
-- **Phase 5**: SLAM + Nav2 navigation.
+- **Phase 5 — Milestones A+B complete, flight-verified in sim**: basic
+  navigation, deliberately kept simple/modular rather than a full SLAM
+  stack. **Milestone A** (`common_control`): a new `NAV_WAYPOINTS`
+  `FlightState` accepts a runtime goal (`/goal_pose`) or path (`/plan`)
+  while `HOVER`, reusing the existing waypoint-following, geofence, and
+  estimate-health machinery — zero Nav2 dependency, testable with a plain
+  `ros2 topic pub` or RViz2's "2D Goal Pose" tool. **Milestone B**
+  (`common_navigation`, new package): a Nav2 **planner-only** bring-up
+  (`planner_server` + `lifecycle_manager`, deliberately excluding
+  `controller_server`/`bt_navigator` — this project's own velocity control
+  and safety watchdogs already own the vehicle) computes real paths against
+  a geofence-bounded costmap and publishes them on Nav2's native `/plan`,
+  no bridge/translation node. Both verified live end to end
+  ([Known Issues 40-43](resource/known-issues.md#issue-40)). Real
+  depth-based obstacle avoidance and RTAB-Map/SLAM mapping remain future,
+  not-yet-designed work — see
+  `ros2_ws/src/common_navigation/config/nav2_planner_params.yaml`'s header.
 
 Full phase-by-phase detail lives in `IMPLEMENTATION_PLAN.md` (local,
 gitignored, not pushed — an internal working document that changes too fast

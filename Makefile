@@ -29,6 +29,11 @@ LOCALIZATION ?= gps
 # fake-VIO stand-in, no camera needed) or openvins (Milestone B real VIO).
 VIO_BACKEND ?= loopback
 
+# Phase 5: set to `true` to also bring up the Nav2 planner-only stack
+# (common_navigation) alongside the flight — see README.md's "Testing Each
+# Phase" / Roadmap Phase 5.
+NAV2 ?= false
+
 # Gazebo world for `make sim`/`make sim-gui` — empty (default, bare ground) or
 # vio_test (colored props, needed for VIO_BACKEND=openvins to have anything to
 # track). See resource/phase3-gps-denied-localization-source.md.
@@ -78,6 +83,7 @@ help:
 	@echo "  ║    make mission     Fly MISSION=square         ║"
 	@echo "  ║      LOCALIZATION=gps|vision (default gps)    ║"
 	@echo "  ║      VIO_BACKEND=loopback|openvins            ║"
+	@echo "  ║      NAV2=true  (Phase 5 planner-only bring-up)║"
 	@echo "  ║    make gz-resync  Drone invisible in GUI? Run ║"
 	@echo "  ║                    this (see Makefile comment) ║"
 	@echo "  ║    make shell      Shell into ros2-autonomy   ║"
@@ -187,7 +193,7 @@ flight-test:
 		source /opt/openvins_ws/install/setup.bash && \
 		source /ros2_ws_build/install/setup.bash && \
 		ros2 launch sim_bringup sim.launch.py action:=hover \
-			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND)"
+			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND) nav2:=$(NAV2)"
 
 # Fly a named waypoint mission (Phase 2): make mission MISSION=square.
 # Through the sim_bringup entry point; the mission takes off, flies its
@@ -203,7 +209,7 @@ mission:
 		source /opt/openvins_ws/install/setup.bash && \
 		source /ros2_ws_build/install/setup.bash && \
 		ros2 launch sim_bringup sim.launch.py action:=mission mission:=$(MISSION) \
-			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND)"
+			localization_source:=$(LOCALIZATION) vio_backend:=$(VIO_BACKEND) nav2:=$(NAV2)"
 
 stop:
 	@docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile sim down --remove-orphans

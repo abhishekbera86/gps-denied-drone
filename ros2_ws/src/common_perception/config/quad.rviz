@@ -78,6 +78,80 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /drone/path
       Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 170; 255
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.029999999329447746
+      Name: Nav2 Plan
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /plan
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: World Props
+      Namespaces:
+        {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /world_markers
+      Value: true
+    - Alpha: 0.6
+      Class: rviz_default_plugins/Map
+      # KNOWN BROKEN on this host, both color schemes tried ("costmap" and
+      # "raw") — both hit the same rviz2/Ogre `indexed_8bit_image` GLSL
+      # shader, which fails to LINK here under both hardware AND llvmpipe
+      # software rendering ("active samplers with a different type refer
+      # to the same texture image unit" — a known upstream rviz2 issue).
+      # The underlying data is confirmed correct via direct topic
+      # inspection (frame_id, 100x100 grid, real ComputePathToPose results
+      # against it) — this is a display-only limitation of this specific
+      # host's OpenGL/Mesa stack, not a data/config problem. Left as
+      # "costmap" (the semantically correct scheme) rather than working
+      # around a bug that isn't actually fixed either way.
+      Color Scheme: costmap
+      Draw Behind: false
+      Enabled: true
+      Name: Global Costmap
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/costmap
+      Update Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/costmap_updates
+      Use Timestamp: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -90,6 +164,13 @@ Visualization Manager:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
   Value: true
   Views:
     Current:

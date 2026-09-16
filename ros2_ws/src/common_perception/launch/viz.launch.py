@@ -26,6 +26,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.substitutions import EnvironmentVariable
 from launch_ros.actions import Node
 
 
@@ -38,6 +39,17 @@ def generate_launch_description():
             package='common_perception',
             executable='state_tf_publisher',
             output='screen',
+        ),
+        # Same PX4_GZ_WORLD env var px4-sim itself reads (docker-compose.yml)
+        # — world_markers parses that exact world's SDF, bind-mounted
+        # read-only at /px4_sitl_worlds (docker-compose.gui.yml).
+        Node(
+            package='common_perception',
+            executable='world_markers',
+            output='screen',
+            parameters=[{
+                'world_name': EnvironmentVariable('PX4_GZ_WORLD', default_value='empty'),
+            }],
         ),
         Node(
             package='rviz2',
