@@ -58,7 +58,7 @@ offboard_control_node:
 square_mission:
   ros__parameters:
     takeoff_height_m: 2.0
-    hover_seconds: 5.0           # unused once waypoints are flying; kept for parity
+    hover_seconds: 60.0           # unused once waypoints are flying; kept for parity
     control_rate_hz: 10.0
     waypoint_tolerance_m: 0.5
     # 0.8, not the original 0.2 — raised 2026-07-09 as part of a VIO-
